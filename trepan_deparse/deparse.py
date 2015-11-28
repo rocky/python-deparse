@@ -1,7 +1,15 @@
 import uncompyle2
 from uncompyle2 import uncompyle, walker, verify, magics
-from uncompyle2.spark import GenericASTTraversal, GenericASTTraversalPruningException
 import sys, inspect, types, cStringIO, re
+
+
+# FIXME: remove uncompyle dups
+# from uncompyle2.walker import find_all_globals, find_globals, find_none
+from uncompyle2.walker import *
+from uncompyle2.spark import GenericASTTraversal, GenericASTTraversalPruningException
+from types import ListType, TupleType, DictType, \
+     EllipsisType, IntType, CodeType
+from scanner import Token, Code
 
 from collections import namedtuple
 NodeInfo = namedtuple("NodeInfo", "node start finish")
@@ -13,6 +21,7 @@ class FindWalker(walker.Walker, object):
 
     def __init__(self, out, scanner, showast=0):
         GenericASTTraversal.__init__(self, ast=None)
+        self.scanner = scanner
         params = {
             'f': out,
             'indent': '',
@@ -50,6 +59,145 @@ class FindWalker(walker.Walker, object):
                  lambda s, x: s.__params.__setitem__('_globals', x),
                  lambda s: s.__params.__delitem__('_globals'),
                  None)
+
+    def make_function(self, node, isLambda, nested=1):
+        """Dump function defintion, doc string, and function body."""
+
+        def build_param(ast, name, default):
+            """build parameters:
+                - handle defaults
+                - handle format tuple parameters
+            """
+            # if formal parameter is a tuple, the paramater name
+            # starts with a dot (eg. '.1', '.2')
+            if name.startswith('.'):
+                # replace the name with the tuple-string
+                name = self.get_tuple_parameter(ast, name)
+
+            if default:
+                if self.showast:
+                    print '--', name
+                    print default
+                    print '--'
+                result = '%s = %s' % (name, self.traverse(default, indent='') )
+                if result[-2:] == '= ':	# default was 'LOAD_CONST None'
+                    result += 'None'
+                return result
+            else:
+                return name
+        defparams = node[:node[-1].attr] # node[-1] == MAKE_xxx_n
+        code = node[-2].attr
+
+        assert type(code) == CodeType
+        code = Code(code, self.scanner, self.currentclass)
+        #assert isinstance(code, Code)
+
+        # add defaults values to parameter names
+        argc = code.co_argcount
+        paramnames = list(code.co_varnames[:argc])
+
+        # defaults are for last n parameters, thus reverse
+        paramnames.reverse(); defparams.reverse()
+
+        try:
+            ast = self.build_ast(code._tokens,
+                                 code._customize,
+                                 isLambda = isLambda,
+                                 noneInNames = ('None' in code.co_names))
+        except ParserError as p:
+            self.write( str(p))
+            self.ERROR = p
+            return
+
+        # build parameters
+
+        ##This would be a nicer piece of code, but I can't get this to work
+        ## now, have to find a usable lambda constuct  hG/2000-09-05
+        ##params = map(lambda name, default: build_param(ast, name, default),
+        ##	     paramnames, defparams)
+        params = []
+        for name, default in map(lambda a,b: (a,b), paramnames, defparams):
+            params.append( build_param(ast, name, default) )
+
+        params.reverse() # back to correct order
+
+        if 4 & code.co_flags:	# flag 2 -> variable number of args
+            params.append('*%s' % code.co_varnames[argc])
+            argc += 1
+        if 8 & code.co_flags:	# flag 3 -> keyword args
+            params.append('**%s' % code.co_varnames[argc])
+            argc += 1
+
+        # dump parameter list (with default values)
+        indent = self.indent
+        if isLambda:
+            self.write("lambda ", ", ".join(params), ": ")
+        else:
+            self.print_("(", ", ".join(params), "):")
+            #self.print_(indent, '#flags:\t', int(code.co_flags))
+
+        if len(code.co_consts)>0 and code.co_consts[0] != None and not isLambda: # ugly
+            # docstring exists, dump it
+            self.print_docstring(indent, code.co_consts[0])
+
+
+        code._tokens = None # save memory
+        assert ast == 'stmts'
+        #if isLambda:
+            # convert 'return' statement to expression
+            #assert len(ast[0]) == 1  wrong, see 'lambda (r,b): r,b,g'
+            #assert ast[-1] == 'stmt'
+            #assert len(ast[-1]) == 1
+#            assert ast[-1][0] == 'return_stmt'
+#            ast[-1][0].type = 'return_lambda'
+        #else:
+        #    if ast[-1] == RETURN_NONE:
+                # Python adds a 'return None' to the
+                # end of any function; remove it
+         #       ast.pop() # remove last node
+
+        all_globals = find_all_globals(ast, set())
+        for g in ((all_globals & self.mod_globs) | find_globals(ast, set())):
+           self.print_(self.indent, 'global ', g)
+        self.mod_globs -= all_globals
+        rn = ('None' in code.co_names) and not find_none(ast)
+        self.gen_source(ast, code._customize, isLambda=isLambda, returnNone=rn)
+        code._tokens = None; code._customize = None # save memory
+
+    def n_return_stmt(self, node):
+        if self.__params['isLambda']:
+            self.preorder(node[0])
+            self.prune()
+        else:
+            self.write(self.indent, 'return')
+            if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_VALUE')]):
+                self.write(' ')
+                self.preorder(node[0])
+            self.print_()
+            self.prune() # stop recursing
+
+    def n_return_if_stmt(self, node):
+        if self.__params['isLambda']:
+            self.preorder(node[0])
+            self.prune()
+        else:
+            self.write(self.indent, 'return')
+            if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_END_IF')]):
+                self.write(' ')
+                self.preorder(node[0])
+            self.print_()
+            self.prune() # stop recursing
+
+    def n_mkfunc(self, node):
+        self.write(node[-2].attr.co_name) # = code.co_name
+        self.indentMore()
+        self.make_function(node, isLambda=0)
+        if len(self.__param_stack) > 1:
+            self.write('\n\n')
+        else:
+            self.write('\n\n\n')
+        self.indentLess()
+        self.prune() # stop recursing
 
     def preorder(self, node=None):
         if node is None:
@@ -109,10 +257,6 @@ class FindWalker(walker.Walker, object):
         else:
             self.customize(customize)
             self.text = self.traverse(ast, isLambda=isLambda)
-            if isLambda:
-                self.write(self.text)
-            else:
-                self.print_(self.text)
         self.return_none = rn
 
     # FIXME; below duplicated the code, since we don't find self.__params
@@ -237,10 +381,9 @@ def uncompyle_test():
     try:
         co = frame.f_code
         # uncompyle(2.7, co, sys.stdout, 1)
-        print
-        print '------------------------'
         walk = uncompyle_find(2.7, co, 33)
-        print
+        print walk.text, "\n"
+        print '------------------------'
         for offset in sorted(walk.offsets.keys()):
             print("offset %d" % offset)
             extractInfo = walk.extract_line_info(offset)
