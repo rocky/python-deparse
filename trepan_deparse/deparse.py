@@ -60,6 +60,30 @@ class FindWalker(walker.Walker, object):
                  lambda s: s.__params.__delitem__('_globals'),
                  None)
 
+    def n_classdef(self, node):
+        # class definition ('class X(A,B,C):')
+        cclass = self.currentclass
+        self.currentclass = str(node[0].pattr)
+
+        self.write('\n\n')
+        self.write(self.indent, 'class ', self.currentclass)
+        self.print_super_classes(node)
+        self.print_(':')
+
+        # class body
+        self.indentMore()
+        self.build_class(node[2][-2].attr)
+        self.indentLess()
+
+        self.currentclass = cclass
+        if len(self.__param_stack) > 1:
+            self.write('\n\n')
+        else:
+            self.write('\n\n\n')
+
+        self.prune()
+
+
     def make_function(self, node, isLambda, nested=1):
         """Dump function defintion, doc string, and function body."""
 
@@ -286,6 +310,9 @@ class FindWalker(walker.Walker, object):
             return None
 
         nodeInfo  = self.offsets[offset]
+        if offset == 0:
+            from trepan.api import debug; debug()
+
         start, finish = (nodeInfo.start, nodeInfo.finish)
         text = self.text
         selectedText = text[start: finish]
@@ -376,25 +403,31 @@ def uncompyle_find(version, co, find_offset, out=sys.stdout, showasm=0, showast=
 
     return walk
 
-def uncompyle_test():
-    frame = inspect.currentframe()
-    try:
-        co = frame.f_code
-        # uncompyle(2.7, co, sys.stdout, 1)
-        walk = uncompyle_find(2.7, co, 33)
-        print walk.text, "\n"
-        print '------------------------'
-        for offset in sorted(walk.offsets.keys()):
-            print("offset %d" % offset)
-            extractInfo = walk.extract_line_info(offset)
-            # print extractInfo
-            print extractInfo.selectedText
-            print extractInfo.selectedLine
-            print extractInfo.markerLine
-
-
-    finally:
-        del frame
+def uncompyle_test(co):
+    # co = inspect.currentframe().f_code
+    # uncompyle(2.7, co, sys.stdout, 1)
+    walk = uncompyle_find(2.7, co, 33)
+    print walk.text, "\n"
+    print '------------------------'
+    for offset in sorted(walk.offsets.keys()):
+        print("offset %d" % offset)
+        extractInfo = walk.extract_line_info(offset)
+        # print extractInfo
+        print extractInfo.selectedText
+        print extractInfo.selectedLine
+        print extractInfo.markerLine
 
 if __name__ == '__main__':
-    uncompyle_test()
+    def test_fn():
+        uncompyle_test(inspect.currentframe().f_code)
+        if len(sys.argv) == 3:
+            try:
+                sys.argv[i+1] = int(sys.argv[i+1])
+            except ValueError:
+                print("** Expecting an integer, got: %s" % repr(sys.argv[i]))
+                sys.exit(2)
+                pass
+            pass
+        pass
+    # test_fn()
+    uncompyle_test(inspect.currentframe().f_code)
