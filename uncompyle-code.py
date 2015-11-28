@@ -1,10 +1,12 @@
 import uncompyle2
 from uncompyle2 import uncompyle, walker, verify, magics
 from uncompyle2.spark import GenericASTTraversal, GenericASTTraversalPruningException
-import sys, inspect, types, cStringIO
+import sys, inspect, types, cStringIO, re
 
 from collections import namedtuple
 NodeInfo = namedtuple("NodeInfo", "node start finish")
+ExtractInfo = namedtuple("ExtractInfo",
+                         "lineNo lineStartOffset markerLine selectedLine selectedText")
 
 class FindWalker(walker.Walker, object):
     stacked_params = ('f', 'indent', 'isLambda', '_globals')
@@ -67,6 +69,10 @@ class FindWalker(walker.Walker, object):
             else:
                 self.default(node)
         except GenericASTTraversalPruningException:
+            # All leaf nodes, those with the offset method among others
+            # seems to fit under this exception. If this is not true
+            # we would need to dupllicate the below code before the
+            # return outside of this block
             if hasattr(node, 'offset'):
                 self.offsets[node.offset] = NodeInfo(node = node,
                                                      start = start,
@@ -93,7 +99,7 @@ class FindWalker(walker.Walker, object):
         self.found_offset = False
 
         # FIXME; the below doesn't find self.__params
-        # work so we duplicate the code.
+        # So we duplicate the code.
         # self.gen_source(ast, customize, isLambda, returnNone)
         rn = self.return_none
         self.return_none = returnNone
@@ -102,11 +108,11 @@ class FindWalker(walker.Walker, object):
             self.print_(self.indent, 'pass')
         else:
             self.customize(customize)
-            result = self.traverse(ast, isLambda=isLambda)
+            self.text = self.traverse(ast, isLambda=isLambda)
             if isLambda:
-                self.write(result)
+                self.write(self.text)
             else:
-                self.print_(result)
+                self.print_(self.text)
         self.return_none = rn
 
     # FIXME; below duplicated the code, since we don't find self.__params
@@ -125,11 +131,55 @@ class FindWalker(walker.Walker, object):
         self.preorder(node)
         self.f.write('\n'*self.pending_newlines)
 
-        result = self.f.getvalue()
+        text = self.f.getvalue()
 
         self.__params = self.__param_stack.pop()
         self.pending_newlines = p
-        return result
+        return text
+
+    def extract_line_info(self, offset):
+        if offset not in self.offsets.keys():
+            return None
+
+        nodeInfo  = self.offsets[offset]
+        start, finish = (nodeInfo.start, nodeInfo.finish)
+        text = self.text
+        selectedText = text[start: finish]
+        # if selectedText == 'co':
+        #     from trepan.api import debug; debug()
+
+        try:
+            lineStart = text[:finish].rindex("\n") + 1
+        except ValueError:
+            lineStart = 0
+
+        try:
+            lineEnd = lineStart + text[lineStart+1:].index("\n") - 1
+        except ValueError:
+            lineEnd = len(text)
+
+        adjustedStart = start - lineStart
+        adjustedFinish = finish - lineStart
+
+        # if offset == 133:
+        #     from trepan.api import debug; debug()
+        leadBlankMatch = re.match('^([ \n]+)',  selectedText)
+        if leadBlankMatch:
+            blankCount = len(leadBlankMatch.group(0))
+        else:
+            blankCount = 0
+
+        markerLine = ((' ' * (adjustedStart + blankCount)) +
+                      ('-' * (len(selectedText) - blankCount)))
+        lines = text[:lineEnd].split("\n")
+        selectedLine = text[lineStart:lineEnd+2]
+
+        return ExtractInfo(lineNo = len(lines), lineStartOffset = lineStart,
+                           markerLine = markerLine,
+                           selectedLine = selectedLine,
+                           selectedText = selectedText)
+
+
     pass
 
 def uncompyle_find(version, co, find_offset, out=sys.stdout, showasm=0, showast=0):
@@ -180,17 +230,28 @@ def uncompyle_find(version, co, find_offset, out=sys.stdout, showasm=0, showast=
     if walk.ERROR:
         raise walk.ERROR
 
-    return
+    return walk
 
 def uncompyle_test():
     frame = inspect.currentframe()
     try:
         co = frame.f_code
-        uncompyle(2.7, co, sys.stdout, 1)
+        # uncompyle(2.7, co, sys.stdout, 1)
         print
         print '------------------------'
-        uncompyle_find(2.7, co, 33)
+        walk = uncompyle_find(2.7, co, 33)
+        print
+        for offset in sorted(walk.offsets.keys()):
+            print("offset %d" % offset)
+            extractInfo = walk.extract_line_info(offset)
+            # print extractInfo
+            print extractInfo.selectedText
+            print extractInfo.selectedLine
+            print extractInfo.markerLine
+
+
     finally:
         del frame
 
-uncompyle_test()
+if __name__ == '__main__':
+    uncompyle_test()
