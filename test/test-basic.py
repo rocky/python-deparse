@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 'Unit test for trepan.processor.command.deparse'
 
-import os, sys, unittest
+import os, sys, unittest, inspect
 
 
-from trepan_deparse import deparse
+from trepan_deparse import deparser
 
 class TestBreakCommand(unittest.TestCase):
 
     def test_basic(self):
-        deparse.uncompyle_test()
+        deparser.deparse_test(inspect.currentframe().f_code)
         self.assertEqual(True, True, "testing")
         return
 

@@ -1,6 +1,7 @@
 '''
   Copyright (c) 1999 John Aycock
   Copyright (c) 2000 by hartmut Goebel <h.goebel@crazy-compilers.com>
+  Copyright (c) 2015 Rocky Bernstein <rocky@cpan.org>
 
   Permission is hereby granted, free of charge, to any person obtaining
   a copy of this software and associated documentation files (the
@@ -21,10 +22,9 @@
   TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-  See the file 'CHANGES' for a list of changes
-
   NB. This is not a masterpiece of software, but became more like a hack.
-  Probably a complete rewrite would be sensefull. hG/2000-12-27
+  Probably a complete rewrite would be senseful. hG/2000-12-27
 '''
 
-__all__ = ['scanner25', 'scanner26', 'scanner27', 'scanner', 'deparse']
+from deparser import deparse
+__all__ = ['scanner25', 'scanner26', 'scanner27', 'scanner', 'deparser']
