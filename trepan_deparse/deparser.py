@@ -66,8 +66,7 @@ class Traverser(walker.Walker, object):
 
         if hasattr(node, 'offset'):
             start = len(self.f.getvalue())
-            # if start == 0:
-            #     from trepan.api import debug; debug()
+            # from trepan.api import debug; debug()
 
         try:
             name = 'n_' + self.typestring(node)
@@ -295,6 +294,7 @@ class Traverser(walker.Walker, object):
                     if remaining > 0:
                         self.write(sep)
                 arg += 1
+                call_fn = node.data[low]
             elif typ == 'P':
                 p = self.prec
                 low, high, sep, self.prec = entry[arg]
@@ -307,6 +307,14 @@ class Traverser(walker.Walker, object):
                         self.write(sep)
                 self.prec = p
                 arg += 1
+                call_fn = node.data[high]
+                if hasattr(call_fn, 'offset'):
+                    self.offsets[call_fn.offset] = NodeInfo(node = call_fn,
+                                                            start = -10,
+                                                            finish = -11,
+                                                            text = '')
+                call_fn = startnode.data[low]
+
             elif typ == '{':
                 d = node.__dict__
                 expr = m.group('expr')
@@ -321,6 +329,9 @@ class Traverser(walker.Walker, object):
                     print node
                     raise
             m = escape.search(fmt, i)
+            if hasattr(node, 'offset') and node.offset not in self.offsets:
+                print("Type %s of node %s has an offset %d" % (type, node, node.offset))
+
         self.write(fmt[i:])
 
     def make_function(self, node, isLambda, nested=1):
@@ -442,7 +453,7 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
     elif version == 2.5:
         import scanner25 as scan
         scanner = scan.Scanner25()
-    scanner.setShowAsm(0, out)
+    scanner.setShowAsm(showasm, out)
     tokens, customize = scanner.disassemble(co)
 
     #  Build AST from disassembly.
@@ -482,7 +493,7 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
 def deparse_test(co):
     # co = inspect.currentframe().f_code
     # uncompyle(2.7, co, sys.stdout, 1)
-    walk = deparse(2.7, co, 33)
+    walk = deparse(2.7, co, showasm=1, showast=1)
     print walk.text, "\n"
     print '------------------------'
     for offset in sorted(walk.offsets.keys()):
@@ -494,6 +505,10 @@ def deparse_test(co):
         print extractInfo.markerLine
 
 if __name__ == '__main__':
+    def foo():
+        deparse_test(inspect.currentframe().f_code)
+        return
+
     def gcd(a, b):
         if a > b:
            (a, b) = (b, a)
@@ -506,5 +521,6 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    gcd(3,5)
+    foo()
+    # gcd(3,5)
     # deparse_test(inspect.currentframe().f_code)

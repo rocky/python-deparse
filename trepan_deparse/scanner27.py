@@ -4,6 +4,39 @@
   Copyright (c) 2005 by Dan Pascu <dan@windowmaker.org>
 
   See main module for license.
+
+
+  Decompilation (walking AST)
+
+  All table-driven.  Step 1 determines a table (T) and a path to a
+  table key (K) from the node type (N) (other nodes are shown as O):
+
+         N                  N               N&K
+     / | ... \          / | ... \        / | ... \
+    O  O      O        O  O      K      O  O      O
+              |
+              K
+
+  MAP_R0 (TABLE_R0)  MAP_R (TABLE_R)  MAP_DIRECT (TABLE_DIRECT)
+
+  The default is a direct mapping.  The key K is then extracted from the
+  subtree and used to find a table entry T[K], if any.  The result is a
+  format string and arguments (a la printf()) for the formatting engine.
+  Escapes in the format string are:
+
+	%c	evaluate N[A] recursively*
+	%C	evaluate N[A[0]]..N[A[1]-1] recursively, separate by A[2]*
+	%,	print ',' if last %C only printed one item (for tuples--unused)
+	%|	tab to current indentation level
+	%+	increase current indentation level
+	%-	decrease current indentation level
+	%{...}	evaluate ... in context of N
+	%%	literal '%'
+
+  * indicates an argument (A) required.
+
+  The '%' may optionally be followed by a number (C) in square brackets, which
+  makes the engine walk down to N[C] before evaluating the escape code.
 '''
 
 import types
@@ -18,7 +51,7 @@ import scanner as scan
 class Scanner27(scan.Scanner):
     def __init__(self):
         self.Token = scan.Scanner.__init__(self, 2.7) # check
-    
+
     def disassemble(self, co, classname=None):
         '''
         Disassemble a code object, returning a list of 'Token'.
@@ -33,7 +66,7 @@ class Scanner27(scan.Scanner):
             if self.code[i] in (RETURN_VALUE, END_FINALLY):
                 n = i + 1
         self.code = array('B', co.co_code[:n])
-        
+
         self.prev = [0]
         # mapping adresses of instru & arg
         for i in self.op_range(0, n):
@@ -42,7 +75,7 @@ class Scanner27(scan.Scanner):
             if op >= HAVE_ARGUMENT:
                 self.prev.append(i)
                 self.prev.append(i)
-                
+
         self.lines = []
         linetuple = namedtuple('linetuple', ['l_no', 'next'])
         j = 0
@@ -66,7 +99,7 @@ class Scanner27(scan.Scanner):
                 if name.startswith(classname) and name[-2:] != '__':
                     return name[len(classname) - 2:]
                 return name
-                
+
             free = [ unmangle(name) for name in (co.co_cellvars + co.co_freevars) ]
             names = [ unmangle(name) for name in co.co_names ]
             varnames = [ unmangle(name) for name in co.co_varnames ]
@@ -80,7 +113,7 @@ class Scanner27(scan.Scanner):
             if self.code[i] == PJIT and self.code[i+3] == LOAD_GLOBAL:
                 if names[self.get_argument(i+3)] == 'AssertionError':
                     self.load_asserts.add(i+3)
-        
+
         cf = self.find_jump_targets(self.code)
         # contains (code, [addrRefToCode])
         last_stmt = self.next_stmt[0]
@@ -95,7 +128,7 @@ class Scanner27(scan.Scanner):
                         replace[i] = 'PRINT_NEWLINE_CONT'
             last_stmt = i
             i = self.next_stmt[i]
-        
+
         imports = self.all_instr(0, n, (IMPORT_NAME, IMPORT_FROM, IMPORT_STAR))
         if len(imports) > 1:
             last_import = imports[0]
@@ -104,7 +137,7 @@ class Scanner27(scan.Scanner):
                     if self.code[last_import] == IMPORT_NAME == self.code[i]:
                         replace[i] = 'IMPORT_NAME_CONT'
                 last_import = i
-        
+
         extended_arg = 0
         for offset in self.op_range(0, n):
             if offset in cf:
@@ -113,7 +146,7 @@ class Scanner27(scan.Scanner):
                     rv.append(Token('COME_FROM', None, repr(j),
                                     offset="%s_%d" % (offset, k)))
                     k += 1
-            
+
             op = self.code[offset]
             op_name = opname[op]
             oparg = None; pattr = None
@@ -193,7 +226,7 @@ class Scanner27(scan.Scanner):
                 rv.append(Token(op_name, oparg, pattr, offset, linestart = offset in linestartoffsets))
             else:
                 rv.append(Token(replace[offset], oparg, pattr, offset, linestart = offset in linestartoffsets))
-            
+
         if self.showasm:
             out = self.out # shortcut
             for t in rv:
@@ -206,12 +239,12 @@ class Scanner27(scan.Scanner):
             return 1
         else:
             return 3
-        
+
     def build_stmt_indices(self):
         code = self.code
         start = 0;
         end = len(code)
-        
+
         stmt_opcodes = {
             SETUP_LOOP, BREAK_LOOP, CONTINUE_LOOP,
             SETUP_FINALLY, END_FINALLY, SETUP_EXCEPT, SETUP_WITH,
@@ -226,9 +259,9 @@ class Scanner27(scan.Scanner):
         }
 
         stmt_opcode_seqs = [(PJIF, JF), (PJIF, JA), (PJIT, JF), (PJIT, JA)]
-        
+
         designator_ops = {
-            STORE_FAST, STORE_NAME, STORE_GLOBAL, STORE_DEREF, STORE_ATTR, 
+            STORE_FAST, STORE_NAME, STORE_GLOBAL, STORE_DEREF, STORE_ATTR,
             STORE_SLICE_0, STORE_SLICE_1, STORE_SLICE_2, STORE_SLICE_3,
             STORE_SUBSCR, UNPACK_SEQUENCE, JA
         }
@@ -245,12 +278,12 @@ class Scanner27(scan.Scanner):
                         match = False
                         break
                     i += self.op_size(code[i])
-                    
+
                 if match:
                     i = self.prev[i]
                     stmts.add(i)
                     pass_stmts.add(i)
-        
+
         if pass_stmts:
             stmt_list = list(stmts)
             stmt_list.sort()
@@ -286,7 +319,7 @@ class Scanner27(scan.Scanner):
             slist += [s] * (s-i)
             i = s
         slist += [end] * (end-len(slist))
-               
+
     def remove_mid_line_ifs(self, ifs):
         filtered = []
         for i in ifs:
@@ -309,7 +342,7 @@ class Scanner27(scan.Scanner):
                 self.ignore_if.add(except_match)
                 self.not_continue.add(jmp)
                 return jmp
-            
+
         count_END_FINALLY = 0
         count_SETUP_ = 0
         for i in self.op_range(start, len(self.code)):
@@ -367,7 +400,7 @@ class Scanner27(scan.Scanner):
                     jump_back = None
             if not jump_back: # loop suite ends in return. wtf right?
                 jump_back = self.last_instr(start, end, RETURN_VALUE) + 1
-                if not jump_back:               
+                if not jump_back:
                     return
                 if code[self.prev[next_line_byte]] not in (PJIF, PJIT):
                     loop_type = 'for'
@@ -388,7 +421,7 @@ class Scanner27(scan.Scanner):
                     self.fixed_jumps[pos] = jump_back+4
                     end = jump_back+4
                 target = self.get_target(jump_back, JA)
-                
+
                 if code[target] in (FOR_ITER, GET_ITER):
                     loop_type = 'for'
                 else:
@@ -396,7 +429,7 @@ class Scanner27(scan.Scanner):
                     test = self.prev[next_line_byte]
                     if test == pos:
                         loop_type = 'while 1'
-                    elif self.code[test] in hasjabs+hasjrel: 
+                    elif self.code[test] in hasjabs+hasjrel:
                         self.ignore_if.add(test)
                         test_target = self.get_target(test)
                         if test_target > (jump_back+3):
@@ -441,7 +474,7 @@ class Scanner27(scan.Scanner):
                     self.structs.append({'type':  'except',
                                    'start': i,
                                    'end':   jmp})
-                    i = jmp + 3   
+                    i = jmp + 3
 
             ## Add the try-else block
             if end_else != start_else:
@@ -452,14 +485,14 @@ class Scanner27(scan.Scanner):
                 self.fixed_jumps[i] = r_end_else
             else:
                 self.fixed_jumps[i] = i+1
-            
+
 
         elif op in (PJIF, PJIT):
-            start = pos+3 
+            start = pos+3
             target = self.get_target(pos, op)
             rtarget = self.restrict_to_parent(target, parent)
             pre = self.prev
-            
+
             if target != rtarget and parent['type'] == 'and/or':
                 self.fixed_jumps[pos] = rtarget
                 return
@@ -472,7 +505,7 @@ class Scanner27(scan.Scanner):
                                        'start': start,
                                        'end':   pre[target]})
                 return
-                       
+
             # is this an if and
             if op == PJIF:
                 match = self.rem_or(start, self.next_stmt[pos], PJIF, target)
@@ -516,7 +549,7 @@ class Scanner27(scan.Scanner):
                     if code[pre[rtarget]] == RAISE_VARARGS:
                         return
                     self.load_asserts.remove(pos+3)
-                
+
                 next = self.next_stmt[pos]
                 if pre[next] == pos:
                     pass
@@ -533,7 +566,7 @@ class Scanner27(scan.Scanner):
                     elif code[next_target] in (JA, JF) and self.get_target(next_target) == self.get_target(target):
                         self.fixed_jumps[pos] = pre[next]
                         return
-            
+
             #don't add a struct for a while test, it's already taken care of
             if pos in self.ignore_if:
                 return
@@ -552,19 +585,19 @@ class Scanner27(scan.Scanner):
             #does the if jump just beyond a jump op, then this is probably an if statement
             if code[pre[rtarget]] in (JA, JF):
                 if_end = self.get_target(pre[rtarget])
-                
+
                 #is this a loop not an if?
                 if (if_end < pre[rtarget]) and (code[pre[if_end]] == SETUP_LOOP):
                     if(if_end > start):
                         return
-                        
+
                 end = self.restrict_to_parent(if_end, parent)
-                                                       
+
                 self.structs.append({'type':  'if-then',
                                        'start': start,
                                        'end':   pre[rtarget]})
                 self.not_continue.add(pre[rtarget])
-                
+
                 if rtarget < end:
                     self.structs.append({'type':  'if-else',
                                        'start': rtarget,
@@ -617,7 +650,7 @@ class Scanner27(scan.Scanner):
                         if op in (JUMP_IF_FALSE_OR_POP, JUMP_IF_TRUE_OR_POP):
                             if (oparg > i):
                                 label = oparg
-                       
+
                 if label is not None and label != -1:
                     targets[label] = targets.get(label, []) + [i]
             elif op == END_FINALLY and i in self.fixed_jumps:

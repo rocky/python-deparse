@@ -40,13 +40,10 @@ classifiers =  ['Development Status :: 5 - Production/Stable',
 author             = "Rocky Bernstein"
 author_email       = "rocky@gnu.org"
 ftp_url            = None
-install_requires   = ['trepan',
-                      'uncompyle',
-                      'pygments',
-                      ]
+install_requires   = ['uncompyle']
 license            = 'GPL'
 mailing_list       = 'python-debugger@googlegroups.com'
-modname            = 'trepan-deparse'
+modname            = 'trepan_deparse'
 packages           = ['trepan_deparse']
 py_modules         = None
 short_desc         = 'show exact location by deparsing interpreter position'

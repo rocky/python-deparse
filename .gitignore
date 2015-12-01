@@ -3,5 +3,6 @@
 /.python-version
 /build
 /dist
+/python_deparse.egg-info
 /trepan.egg-info
 /trepan_deparse.egg-info
