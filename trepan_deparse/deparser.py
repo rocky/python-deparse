@@ -61,12 +61,10 @@ class Traverser(walker.Walker, object):
 
     def preorder(self, node=None):
         if node is None:
-            # from trepan.api import debug; debug()
             node = self.ast
 
         if hasattr(node, 'offset'):
             start = len(self.f.getvalue())
-            # from trepan.api import debug; debug()
 
         try:
             name = 'n_' + self.typestring(node)
@@ -91,6 +89,7 @@ class Traverser(walker.Walker, object):
             return
 
         for kid in node:
+            kid.parent = node
             self.preorder(kid)
 
         name = name + '_exit'
@@ -102,27 +101,39 @@ class Traverser(walker.Walker, object):
 
     def n_return_stmt(self, node):
         if self.__params['isLambda']:
+            node[0].parent = node
             self.preorder(node[0])
             self.prune()
         else:
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_VALUE')]):
                 self.write(' ')
+                node[0].parent = node
                 self.preorder(node[0])
             self.print_()
             self.prune() # stop recursing
 
     def n_return_if_stmt(self, node):
         if self.__params['isLambda']:
+            node[0].parent = node
             self.preorder(node[0])
             self.prune()
         else:
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_END_IF')]):
                 self.write(' ')
+                node[0].parent = node
                 self.preorder(node[0])
             self.print_()
             self.prune() # stop recursing
+
+    def n_yield(self, node):
+        self.write('yield')
+        if node != AST('yield', [NONE, Token('YIELD_VALUE')]):
+            self.write(' ')
+            node[0].parent = node
+            self.preorder(node[0])
+        self.prune() # stop recursing
 
     def n_mkfunc(self, node):
         self.write(node[-2].attr.co_name) # = code.co_name
@@ -202,14 +213,21 @@ class Traverser(walker.Walker, object):
             return None
 
         nodeInfo  = self.offsets[offset]
-        # if offset == 0:
-        #     from trepan.api import debug; debug()
+
+        # XXX debug
+        # print('-' * 30)
+        # node = nodeInfo.node
+        # print(node)
+        # if hasattr(node, 'parent'):
+        #     print('~' * 30)
+        #     print(node.parent)
+        # else:
+        #     print("No parent")
+        # print('-' * 30)
 
         start, finish = (nodeInfo.start, nodeInfo.finish)
         text = self.text
         selectedText = text[start: finish]
-        # if selectedText == 'co':
-        #     from trepan.api import debug; debug()
 
         try:
             lineStart = text[:finish].rindex("\n") + 1
@@ -224,8 +242,6 @@ class Traverser(walker.Walker, object):
         adjustedStart = start - lineStart
         adjustedFinish = finish - lineStart
 
-        # if offset == 133:
-        #     from trepan.api import debug; debug()
         leadBlankMatch = re.match('^([ \n]+)',  selectedText)
         if leadBlankMatch:
             blankCount = len(leadBlankMatch.group(0))
@@ -241,6 +257,40 @@ class Traverser(walker.Walker, object):
                            markerLine = markerLine,
                            selectedLine = selectedLine,
                            selectedText = selectedText)
+
+
+    def n_expr(self, node):
+        p = self.prec
+        if node[0].type.startswith('binary_expr'):
+            n = node[0][-1][0]
+        else:
+            n = node[0]
+        self.prec = PRECEDENCE.get(n,-2)
+        if n == 'LOAD_CONST' and repr(n.pattr)[0] == '-':
+            self.prec = 6
+        if p < self.prec:
+            self.write('(')
+            node[0].parent = node
+            self.preorder(node[0])
+            self.write(')')
+        else:
+            node[0].parent = node
+            self.preorder(node[0])
+        self.prec = p
+        self.prune()
+
+    def n_binary_expr(self, node):
+        node[0].parent = node
+        self.preorder(node[0])
+        self.write(' ')
+        node[-1].parent = node
+        self.preorder(node[-1])
+        self.write(' ')
+        self.prec -= 1
+        node[1].parent = node
+        self.preorder(node[1])
+        self.prec += 1
+        self.prune()
 
 
     def engine(self, entry, startnode):
@@ -276,11 +326,13 @@ class Traverser(walker.Walker, object):
                 if lastC == 1:
                     self.write(',')
             elif typ == 'c':
+                node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
                 arg += 1
             elif typ == 'p':
                 p = self.prec
                 (index, self.prec) = entry[arg]
+                node[index].parent = node
                 self.preorder(node[index])
                 self.prec = p
                 arg += 1
@@ -289,18 +341,19 @@ class Traverser(walker.Walker, object):
                 lastC = remaining = len(node[low:high])
                 ## remaining = len(node[low:high])
                 for subnode in node[low:high]:
+                    subnode.parent = node
                     self.preorder(subnode)
                     remaining -= 1
                     if remaining > 0:
                         self.write(sep)
                 arg += 1
-                call_fn = node.data[low]
             elif typ == 'P':
                 p = self.prec
                 low, high, sep, self.prec = entry[arg]
                 lastC = remaining = len(node[low:high])
                 ## remaining = len(node[low:high])
                 for subnode in node[low:high]:
+                    subnode.parent = node
                     self.preorder(subnode)
                     remaining -= 1
                     if remaining > 0:
@@ -308,18 +361,20 @@ class Traverser(walker.Walker, object):
                 self.prec = p
                 arg += 1
                 call_fn = node.data[high]
+                call_fn.parent  = startnode
                 if hasattr(call_fn, 'offset'):
                     self.offsets[call_fn.offset] = NodeInfo(node = call_fn,
                                                             start = -10,
                                                             finish = -11,
                                                             text = '')
-                call_fn = startnode.data[low]
 
             elif typ == '{':
                 d = node.__dict__
                 expr = m.group('expr')
                 try:
                     if hasattr(node, 'offset'):
+                        if not hasattr(node, 'parent'):
+                           node.parent = startnode
                         self.offsets[node.offset] = NodeInfo(node = node,
                                                             start = -3,
                                                             finish = -4,
@@ -521,6 +576,6 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    foo()
-    # gcd(3,5)
+    # foo()
+    gcd(3,5)
     # deparse_test(inspect.currentframe().f_code)
