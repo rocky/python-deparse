@@ -80,11 +80,10 @@ class Traverser(walker.Walker, object):
             # return outside of this block
             if hasattr(node, 'offset'):
                 node.text = self.f.getvalue()
-                self.offsets[node.offset] = NodeInfo(node = node,
-                                                     start = start,
-                                                     finish = len(self.f.getvalue()),
-                                                     text = self.f.getvalue())
-                # print self.offsets[node.offset]
+                self.offsets[self.name, node.offset] = \
+                             NodeInfo(node = node, start = start,
+                                      finish = len(self.f.getvalue()),
+                                      text = self.f.getvalue())
                 # print self.f.getvalue()[start:]
             return
 
@@ -136,9 +135,12 @@ class Traverser(walker.Walker, object):
         self.prune() # stop recursing
 
     def n_mkfunc(self, node):
-        self.write(node[-2].attr.co_name) # = code.co_name
+        old_name = self.name
+        self.name = node[-2].attr.co_name # code.co_name
+        self.write(self.name)
         self.indentMore()
         self.make_function(node, isLambda=0)
+        self.name = old_name
         if len(self.__param_stack) > 1:
             self.write('\n\n')
         else:
@@ -170,7 +172,7 @@ class Traverser(walker.Walker, object):
         self.prune()
 
 
-    def walk_source(self, ast, customize, isLambda=0, returnNone=False):
+    def walk_source(self, ast, name, customize, isLambda=0, returnNone=False):
         """convert AST to source code"""
 
         # FIXME; the below doesn't find self.__params
@@ -178,6 +180,7 @@ class Traverser(walker.Walker, object):
         # self.gen_source(ast, customize, isLambda, returnNone)
         rn = self.return_none
         self.return_none = returnNone
+        self.name = name
         # if code would be empty, append 'pass'
         if len(ast) == 0:
             self.print_(self.indent, 'pass')
@@ -208,11 +211,11 @@ class Traverser(walker.Walker, object):
         self.pending_newlines = p
         return text
 
-    def extract_line_info(self, offset):
-        if offset not in self.offsets.keys():
+    def extract_line_info(self, name, offset):
+        if (name, offset) not in self.offsets.keys():
             return None
 
-        nodeInfo  = self.offsets[offset]
+        nodeInfo  = self.offsets[name, offset]
 
         # XXX debug
         # print('-' * 30)
@@ -363,10 +366,9 @@ class Traverser(walker.Walker, object):
                 call_fn = node.data[high]
                 call_fn.parent  = startnode
                 if hasattr(call_fn, 'offset'):
-                    self.offsets[call_fn.offset] = NodeInfo(node = call_fn,
-                                                            start = -10,
-                                                            finish = -11,
-                                                            text = '')
+                    self.offsets[self.name, call_fn.offset] = \
+                      NodeInfo(node = call_fn, start = -10,
+                               finish = -11, text = '')
 
             elif typ == '{':
                 d = node.__dict__
@@ -375,16 +377,15 @@ class Traverser(walker.Walker, object):
                     if hasattr(node, 'offset'):
                         if not hasattr(node, 'parent'):
                            node.parent = startnode
-                        self.offsets[node.offset] = NodeInfo(node = node,
-                                                            start = -3,
-                                                            finish = -4,
-                                                            text = eval(expr, d, d))
+                        self.offsets[self.name, node.offset] = \
+                          NodeInfo(node = node, start = -3,
+                                   finish = -4, text = eval(expr, d, d))
                     self.write(eval(expr, d, d))
                 except:
                     print node
                     raise
             m = escape.search(fmt, i)
-            if hasattr(node, 'offset') and node.offset not in self.offsets:
+            if hasattr(node, 'offset') and (self.name, node.offset) not in self.offsets:
                 print("Type %s of node %s has an offset %d" % (type, node, node.offset))
 
         self.write(fmt[i:])
@@ -537,7 +538,7 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
         pass
     walk.mod_globs = walker.find_globals(ast, set())
     # walk.gen_source(ast, customize)
-    walk.walk_source(ast, customize)
+    walk.walk_source(ast, co.co_name, customize)
     for g in walk.mod_globs:
         walk.write('global %s ## Warning: Unused global' % g)
     if walk.ERROR:
@@ -551,9 +552,9 @@ def deparse_test(co):
     walk = deparse(2.7, co, showasm=1, showast=1)
     print walk.text, "\n"
     print '------------------------'
-    for offset in sorted(walk.offsets.keys()):
-        print("offset %d" % offset)
-        extractInfo = walk.extract_line_info(offset)
+    for name, offset in sorted(walk.offsets.keys()):
+        print("name %s, offset %d" % (name, offset))
+        extractInfo = walk.extract_line_info(name, offset)
         # print extractInfo
         print extractInfo.selectedText
         print extractInfo.selectedLine
@@ -576,6 +577,6 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    # foo()
+    foo()
     gcd(3,5)
     # deparse_test(inspect.currentframe().f_code)
