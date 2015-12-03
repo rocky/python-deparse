@@ -46,8 +46,11 @@ import sys, inspect, types, cStringIO, re
 
 # FIXME: remove uncompyle dups
 # from uncompyle2.walker import find_all_globals, find_globals, find_none
-from uncompyle2.walker import *
-from uncompyle2.spark import GenericASTTraversal, GenericASTTraversalPruningException
+from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
+from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
+from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
+from uncompyle2.spark import GenericASTTraversal
+from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
 from scanner import Token, Code
 
@@ -98,6 +101,8 @@ class Traverser(walker.Walker, object):
 
     def set_pos_info(self, node, start, finish):
         if hasattr(node, 'offset'):
+            if type(node.offset) == type('string'):
+                from trepan.api import debug; debug()
             self.offsets[self.name, node.offset] = \
               NodeInfo(node = node, start = start, finish = finish)
         node.start  = start
@@ -314,21 +319,53 @@ class Traverser(walker.Walker, object):
         self.print_()
         self.prune() # stop recursing
 
-    def n_mkfunc(self, node):
-        start = len(self.f.getvalue())
-        old_name = self.name
-        self.name = node[-2].attr.co_name # code.co_name
-        self.write(self.name)
+    def n_ifelsestmtr(self, node):
+        if len(node[2]) != 2:
+            self.default(node)
+
+        if not (node[2][0][0][0] == 'ifstmt' and node[2][0][0][0][1][0] == 'return_if_stmts') \
+                and not (node[2][0][-1][0] == 'ifstmt' and node[2][0][-1][0][1][0] == 'return_if_stmts'):
+            self.default(node)
+            return
+
+        start = len(self.f.getvalue()) + len(self.indent)
+        self.write(self.indent, 'if ')
+        self.preorder(node[0])
+        self.print_(':')
         self.indentMore()
-        self.make_function(node, isLambda=0)
-        self.name = old_name
-        self.set_pos_info(node, start, len(self.f.getvalue()))
-        if len(self.__param_stack) > 1:
-            self.write('\n\n')
-        else:
-            self.write('\n\n\n')
+        node[1].parent = node
+        self.preorder(node[1])
         self.indentLess()
-        self.prune() # stop recursing
+
+        if_ret_at_end = False
+        if len(node[2][0]) >= 3:
+            node[2][0].parent = node
+            if node[2][0][-1][0] == 'ifstmt' and node[2][0][-1][0][1][0] == 'return_if_stmts':
+                if_ret_at_end = True
+
+        past_else = False
+        prev_stmt_is_if_ret = True
+        for n in node[2][0]:
+            if (n[0] == 'ifstmt' and n[0][1][0] == 'return_if_stmts'):
+                if prev_stmt_is_if_ret:
+                    n[0].type = 'elifstmt'
+                prev_stmt_is_if_ret = True
+            else:
+                prev_stmt_is_if_ret = False
+                if not past_else and not if_ret_at_end:
+                    self.print_(self.indent, 'else:')
+                    self.indentMore()
+                    past_else = True
+            n.parent = node
+            self.preorder(n)
+        if not past_else or if_ret_at_end:
+            self.print_(self.indent, 'else:')
+            self.indentMore()
+        node[2][1].parent = node
+        self.preorder(node[2][1])
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.indentLess()
+        self.prune()
 
     def n_elifelsestmtr(self, node):
         if len(node[2]) != 2:
@@ -381,6 +418,22 @@ class Traverser(walker.Walker, object):
         self.set_pos_info(node, start, len(self.f.getvalue()))
         self.prune() # stop recursing
 
+    def n_mkfunc(self, node):
+        start = len(self.f.getvalue())
+        old_name = self.name
+        self.name = node[-2].attr.co_name # code.co_name
+        self.write(self.name)
+        self.indentMore()
+        self.make_function(node, isLambda=0)
+        self.name = old_name
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        if len(self.__param_stack) > 1:
+            self.write('\n\n')
+        else:
+            self.write('\n\n\n')
+        self.indentLess()
+        self.prune() # stop recursing
+
     def n_genexpr(self, node):
         start = len(self.f.getvalue())
         self.write('(')
@@ -390,7 +443,7 @@ class Traverser(walker.Walker, object):
         self.prune()
 
     def n_setcomp(self, node):
-        self.set_pos_info(node, start, len(self.f.getvalue()))
+        start = len(self.f.getvalue())
         self.write('{')
         self.comprehension_walk(node, 4)
         self.write('}')
@@ -512,6 +565,108 @@ class Traverser(walker.Walker, object):
                            selectedLine = selectedLine,
                            selectedText = selectedText)
 
+    def print_super_classes(self, node):
+        node[1][0].parent = node
+        node = node[1][0]
+        if not (node == 'build_list'):
+            return
+
+        start = len(self.f.getvalue())
+        self.write('(')
+        line_separator = ', '
+        sep = ''
+        for elem in node[:-1]:
+            value = self.traverse(elem)
+            self.write(sep, value)
+            sep = line_separator
+
+        self.write(')')
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+
+    def n_mapexpr(self, node):
+        """
+        prettyprint a mapexpr
+        'mapexpr' is something like k = {'a': 1, 'b': 42 }"
+        """
+        start = len(self.f.getvalue())
+        p = self.prec
+        self.prec = 100
+        assert node[-1] == 'kvlist'
+        node[-1].parent = node
+        node = node[-1] # goto kvlist
+
+        self.indentMore(INDENT_PER_LEVEL)
+        line_seperator = ',\n' + self.indent
+        sep = INDENT_PER_LEVEL[:-1]
+        start = len(self.f.getvalue())
+        self.write('{')
+        for kv in node:
+            assert kv in ('kv', 'kv2', 'kv3')
+            # kv ::= DUP_TOP expr ROT_TWO expr STORE_SUBSCR
+            # kv2 ::= DUP_TOP expr expr ROT_THREE STORE_SUBSCR
+            # kv3 ::= expr expr STORE_MAP
+            if kv == 'kv':
+                name = self.traverse(kv[-2], indent='');
+                kv[1].parent = node
+                value = self.traverse(kv[1], indent=self.indent+(len(name)+2)*' ')
+            elif kv == 'kv2':
+                name = self.traverse(kv[1], indent='');
+                kv[-3].parent = node
+                value = self.traverse(kv[-3], indent=self.indent+(len(name)+2)*' ')
+            elif kv == 'kv3':
+                name = self.traverse(kv[-2], indent='');
+                kv[0].parent = node
+                value = self.traverse(kv[0], indent=self.indent+(len(name)+2)*' ')
+            self.write(sep, name, ': ', value)
+            sep = line_seperator
+        self.write('}')
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.indentLess(INDENT_PER_LEVEL)
+        self.prec = p
+        self.prune()
+
+
+    def n_build_list(self, node):
+        """
+        prettyprint a list or tuple
+        """
+        p = self.prec
+        self.prec = 100
+        lastnode = node.pop().type
+        start = len(self.f.getvalue())
+        if lastnode.startswith('BUILD_LIST'):
+            self.write('['); endchar = ']'
+        elif lastnode.startswith('BUILD_TUPLE'):
+            self.write('('); endchar = ')'
+        elif lastnode.startswith('BUILD_SET'):
+            self.write('{'); endchar = '}'
+        elif lastnode.startswith('ROT_TWO'):
+            self.write('('); endchar = ')'
+        else:
+            raise 'Internal Error: n_build_list expects list or tuple'
+
+        self.indentMore(INDENT_PER_LEVEL)
+        if len(node) > 3:
+            line_separator = ',\n' + self.indent
+        else:
+            line_separator = ', '
+        sep = INDENT_PER_LEVEL[:-1]
+        for elem in node:
+            if (elem == 'ROT_THREE'):
+                continue
+
+            assert elem == 'expr'
+            value = self.traverse(elem)
+            self.write(sep, value)
+            sep = line_separator
+        if len(node) == 1 and lastnode.startswith('BUILD_TUPLE'):
+            self.write(',')
+        self.write(endchar)
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.indentLess(INDENT_PER_LEVEL)
+        self.prec = p
+        self.prune()
+
     def engine(self, entry, startnode):
         # self.print_("-----")
         # self.print_(str(startnode.__dict__))
@@ -551,8 +706,11 @@ class Traverser(walker.Walker, object):
                 if lastC == 1:
                     self.write(',')
             elif typ == 'c':
+                start = len(self.f.getvalue())
                 node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
+                ## print "XXX", node[entry[arg]]
+                self.set_pos_info(node, start, len(self.f.getvalue()))
                 arg += 1
             elif typ == 'p':
                 p = self.prec
@@ -567,12 +725,14 @@ class Traverser(walker.Walker, object):
             elif typ == 'C':
                 low, high, sep = entry[arg]
                 lastC = remaining = len(node[low:high])
+                start = len(self.f.getvalue())
                 for subnode in node[low:high]:
                     subnode.parent = node
                     self.preorder(subnode)
                     remaining -= 1
                     if remaining > 0:
                         self.write(sep)
+                self.set_pos_info(node, start, len(self.f.getvalue()))
                 arg += 1
             elif typ == 'P':
                 p = self.prec
@@ -773,6 +933,20 @@ if __name__ == '__main__':
         deparse_test(inspect.currentframe().f_code)
         return
 
+    def check_args():
+        deparse_test(inspect.currentframe().f_code)
+        if len(sys.argv) != 3:
+            # Rather than use sys.exit let's just raise an error
+            raise Exception("Need to give two numbers")
+        for i in range(2):
+            try:
+                sys.argv[i+1] = int(sys.argv[i+1])
+            except ValueError:
+                print("** Expecting an integer, got: %s" % repr(sys.argv[i]))
+                sys.exit(2)
+                pass
+            pass
+
     def gcd(a, b):
         if a > b:
             (a, b) = (b, a)
@@ -785,6 +959,7 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    foo()
-    gcd(3,5)
+    # foo()
+    # gcd(3,5)
+    check_args()
     # deparse_test(inspect.currentframe().f_code)
