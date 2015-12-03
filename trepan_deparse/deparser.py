@@ -49,7 +49,7 @@ import sys, inspect, types, cStringIO, re
 from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
 from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
 from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
-from uncompyle2.walker import ParserError, MAP, MAP_DIRECT
+from uncompyle2.walker import ParserError
 from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
