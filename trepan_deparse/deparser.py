@@ -1,5 +1,4 @@
-import uncompyle2
-from uncompyle2 import uncompyle, walker, verify, magics
+from uncompyle2 import walker
 import sys, inspect, types, cStringIO, re
 
 
@@ -7,12 +6,11 @@ import sys, inspect, types, cStringIO, re
 # from uncompyle2.walker import find_all_globals, find_globals, find_none
 from uncompyle2.walker import *
 from uncompyle2.spark import GenericASTTraversal, GenericASTTraversalPruningException
-from types import ListType, TupleType, DictType, \
-     EllipsisType, IntType, CodeType
+from types import CodeType
 from scanner import Token, Code
 
 from collections import namedtuple
-NodeInfo = namedtuple("NodeInfo", "node start text finish")
+NodeInfo = namedtuple("NodeInfo", "node start finish")
 ExtractInfo = namedtuple("ExtractInfo",
                          "lineNo lineStartOffset markerLine selectedLine selectedText")
 
@@ -22,10 +20,7 @@ class Traverser(walker.Walker, object):
     def __init__(self, out, scanner, showast=0):
         GenericASTTraversal.__init__(self, ast=None)
         self.scanner = scanner
-        params = {
-            'f': out,
-            'indent': '',
-            }
+        params = {'f': out, 'indent': '', }
         self.showast = showast
         self.__params = params
         self.__param_stack = []
@@ -37,7 +32,7 @@ class Traverser(walker.Walker, object):
         self.pending_newlines = 0
 
         self.offsets = {}
-
+        self.last_finish = -1
 
     f = property(lambda s: s.__params['f'],
                  lambda s, x: s.__params.__setitem__('f', x),
@@ -58,6 +53,13 @@ class Traverser(walker.Walker, object):
                  lambda s, x: s.__params.__setitem__('_globals', x),
                  lambda s: s.__params.__delitem__('_globals'),
                  None)
+
+    def set_pos_info(self, node, start, finish):
+        self.offsets[self.name, node.offset] = \
+          NodeInfo(node = node, start = start, finish = finish)
+        node.start  = start
+        node.finish = finish
+        self.last_finish = finish
 
     def preorder(self, node=None):
         if node is None:
@@ -80,10 +82,7 @@ class Traverser(walker.Walker, object):
             # return outside of this block
             if hasattr(node, 'offset'):
                 node.text = self.f.getvalue()
-                self.offsets[self.name, node.offset] = \
-                             NodeInfo(node = node, start = start,
-                                      finish = len(self.f.getvalue()),
-                                      text = self.f.getvalue())
+                self.set_pos_info(node, start, len(self.f.getvalue()))
                 # print self.f.getvalue()[start:]
             return
 
@@ -99,30 +98,45 @@ class Traverser(walker.Walker, object):
         return
 
     def n_return_stmt(self, node):
+        start = self.last_finish
         if self.__params['isLambda']:
             node[0].parent = node
             self.preorder(node[0])
+            if hasattr(node[-1], 'offset'):
+                self.set_pos_info(node[-1], start,
+                len(self.f.getvalue()))
+                node[-1].parent = node
             self.prune()
         else:
+            start = len(self.f.getvalue()) + len(self.indent)
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_VALUE')]):
                 self.write(' ')
                 node[0].parent = node
                 self.preorder(node[0])
+                if hasattr(node[-1], 'offset'):
+                    self.set_pos_info(node[-1], start,
+                        len(self.f.getvalue()))
+                    node[-1].parent = node
             self.print_()
             self.prune() # stop recursing
 
     def n_return_if_stmt(self, node):
+
         if self.__params['isLambda']:
             node[0].parent = node
             self.preorder(node[0])
             self.prune()
         else:
+            start = len(self.f.getvalue()) + len(self.indent)
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_END_IF')]):
                 self.write(' ')
                 node[0].parent = node
                 self.preorder(node[0])
+                if hasattr(node[-1], 'offset'):
+                    self.set_pos_info(node[-1], start, len(self.f.getvalue()))
+                    node[-1].parent = node
             self.print_()
             self.prune() # stop recursing
 
@@ -171,7 +185,6 @@ class Traverser(walker.Walker, object):
 
         self.prune()
 
-
     def walk_source(self, ast, name, customize, isLambda=0, returnNone=False):
         """convert AST to source code"""
 
@@ -202,10 +215,12 @@ class Traverser(walker.Walker, object):
             'indent': indent,
             'isLambda': isLambda,
             }
+        self.last_finish = self.f.getvalue()
         self.preorder(node)
         self.f.write('\n'*self.pending_newlines)
 
         text = self.f.getvalue()
+        self.last_finish = len(text)
 
         self.__params = self.__param_stack.pop()
         self.pending_newlines = p
@@ -243,7 +258,6 @@ class Traverser(walker.Walker, object):
             lineEnd = len(text)
 
         adjustedStart = start - lineStart
-        adjustedFinish = finish - lineStart
 
         leadBlankMatch = re.match('^([ \n]+)',  selectedText)
         if leadBlankMatch:
@@ -261,21 +275,24 @@ class Traverser(walker.Walker, object):
                            selectedLine = selectedLine,
                            selectedText = selectedText)
 
-
     def n_expr(self, node):
         p = self.prec
+        if hasattr(node, 'offset'):
+            print("n_expr has offset")
         if node[0].type.startswith('binary_expr'):
             n = node[0][-1][0]
         else:
             n = node[0]
-        self.prec = PRECEDENCE.get(n,-2)
+        self.prec = PRECEDENCE.get(n, -2)
         if n == 'LOAD_CONST' and repr(n.pattr)[0] == '-':
             self.prec = 6
         if p < self.prec:
             self.write('(')
             node[0].parent = node
+            self.last_finish = len(self.f.getvalue())
             self.preorder(node[0])
             self.write(')')
+            self.last_finish = len(self.f.getvalue())
         else:
             node[0].parent = node
             self.preorder(node[0])
@@ -283,26 +300,32 @@ class Traverser(walker.Walker, object):
         self.prune()
 
     def n_binary_expr(self, node):
+        if hasattr(node, 'offset'):
+            print("expr has offset")
         node[0].parent = node
+        self.last_finish = len(self.f.getvalue())
         self.preorder(node[0])
         self.write(' ')
+        self.last_finish = len(self.f.getvalue())
         node[-1].parent = node
         self.preorder(node[-1])
         self.write(' ')
         self.prec -= 1
         node[1].parent = node
+        self.last_finish = len(self.f.getvalue())
         self.preorder(node[1])
+        self.last_finish = len(self.f.getvalue())
         self.prec += 1
         self.prune()
 
-
     def engine(self, entry, startnode):
-        #self.print_("-----")
-        #self.print_(str(startnode.__dict__))
+        # self.print_("-----")
+        # self.print_(str(startnode.__dict__))
+
+        self.last_finish = len(self.f.getvalue())
+        startnode_start = self.last_finish
 
         fmt = entry[0]
-        ## no longer used, since BUILD_TUPLE_n is pretty printed:
-        ##lastC = 0
         arg = 1
         i = 0
 
@@ -320,11 +343,11 @@ class Traverser(walker.Walker, object):
                 print node.__dict__
                 raise
 
-            if   typ == '%':	self.write('%')
-            elif typ == '+':	self.indentMore()
-            elif typ == '-':	self.indentLess()
-            elif typ == '|':	self.write(self.indent)
-            ## no longer used, since BUILD_TUPLE_n is pretty printed:
+            if   typ == '%': self.write('%')
+            elif typ == '+': self.indentMore()
+            elif typ == '-': self.indentLess()
+            elif typ == '|': self.write(self.indent)
+            # no longer used, since BUILD_TUPLE_n is pretty printed:
             elif typ == ',':
                 if lastC == 1:
                     self.write(',')
@@ -342,7 +365,6 @@ class Traverser(walker.Walker, object):
             elif typ == 'C':
                 low, high, sep = entry[arg]
                 lastC = remaining = len(node[low:high])
-                ## remaining = len(node[low:high])
                 for subnode in node[low:high]:
                     subnode.parent = node
                     self.preorder(subnode)
@@ -353,8 +375,9 @@ class Traverser(walker.Walker, object):
             elif typ == 'P':
                 p = self.prec
                 low, high, sep, self.prec = entry[arg]
-                lastC = remaining = len(node[low:high])
-                ## remaining = len(node[low:high])
+                remaining = len(node[low:high])
+                start = self.last_finish
+                # remaining = len(node[low:high])
                 for subnode in node[low:high]:
                     subnode.parent = node
                     self.preorder(subnode)
@@ -366,21 +389,18 @@ class Traverser(walker.Walker, object):
                 call_fn = node.data[high]
                 call_fn.parent  = startnode
                 if hasattr(call_fn, 'offset'):
-                    self.offsets[self.name, call_fn.offset] = \
-                      NodeInfo(node = call_fn, start = -10,
-                               finish = -11, text = '')
+                    self.set_pos_info(call_fn, start, len(self.f.getvalue()))
 
             elif typ == '{':
                 d = node.__dict__
                 expr = m.group('expr')
                 try:
-                    if hasattr(node, 'offset'):
-                        if not hasattr(node, 'parent'):
-                           node.parent = startnode
-                        self.offsets[self.name, node.offset] = \
-                          NodeInfo(node = node, start = -3,
-                                   finish = -4, text = eval(expr, d, d))
+                    start = self.last_finish
                     self.write(eval(expr, d, d))
+                    if hasattr(node, 'offset'):
+                        self.set_pos_info(node, start, len(self.f.getvalue()))
+                        if not hasattr(node, 'parent'):
+                            node.parent = startnode
                 except:
                     print node
                     raise
@@ -389,6 +409,8 @@ class Traverser(walker.Walker, object):
                 print("Type %s of node %s has an offset %d" % (type, node, node.offset))
 
         self.write(fmt[i:])
+        if hasattr(startnode, 'offset'):
+            self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
 
     def make_function(self, node, isLambda, nested=1):
         """Dump function defintion, doc string, and function body."""
@@ -420,7 +442,7 @@ class Traverser(walker.Walker, object):
 
         assert type(code) == CodeType
         code = Code(code, self.scanner, self.currentclass)
-        #assert isinstance(code, Code)
+        # assert isinstance(code, Code)
 
         # add defaults values to parameter names
         argc = code.co_argcount
@@ -441,12 +463,12 @@ class Traverser(walker.Walker, object):
 
         # build parameters
 
-        ##This would be a nicer piece of code, but I can't get this to work
-        ## now, have to find a usable lambda constuct  hG/2000-09-05
-        ##params = map(lambda name, default: build_param(ast, name, default),
-        ##	     paramnames, defparams)
+        # This would be a nicer piece of code, but I can't get this to work
+        # now, have to find a usable lambda constuct  hG/2000-09-05
+        # params = map(lambda name, default: build_param(ast, name, default),
+        # paramnames, defparams)
         params = []
-        for name, default in map(lambda a,b: (a,b), paramnames, defparams):
+        for name, default in map(lambda a, b: (a, b), paramnames, defparams):
             params.append( build_param(ast, name, default) )
 
         params.reverse() # back to correct order
@@ -464,31 +486,18 @@ class Traverser(walker.Walker, object):
             self.write("lambda ", ", ".join(params), ": ")
         else:
             self.print_("(", ", ".join(params), "):")
-            #self.print_(indent, '#flags:\t', int(code.co_flags))
+            # self.print_(indent, '#flags:\t', int(code.co_flags))
 
-        if len(code.co_consts)>0 and code.co_consts[0] != None and not isLambda: # ugly
+        if len(code.co_consts)>0 and code.co_consts[0] is not None and not isLambda: # ugly
             # docstring exists, dump it
             self.print_docstring(indent, code.co_consts[0])
 
-
         code._tokens = None # save memory
         assert ast == 'stmts'
-        #if isLambda:
-            # convert 'return' statement to expression
-            #assert len(ast[0]) == 1  wrong, see 'lambda (r,b): r,b,g'
-            #assert ast[-1] == 'stmt'
-            #assert len(ast[-1]) == 1
-#            assert ast[-1][0] == 'return_stmt'
-#            ast[-1][0].type = 'return_lambda'
-        #else:
-        #    if ast[-1] == RETURN_NONE:
-                # Python adds a 'return None' to the
-                # end of any function; remove it
-         #       ast.pop() # remove last node
 
         all_globals = find_all_globals(ast, set())
         for g in ((all_globals & self.mod_globs) | find_globals(ast, set())):
-           self.print_(self.indent, 'global ', g)
+            self.print_(self.indent, 'global ', g)
         self.mod_globs -= all_globals
         rn = ('None' in code.co_names) and not find_none(ast)
         self.gen_source(ast, code._customize, isLambda=isLambda, returnNone=rn)
@@ -497,7 +506,7 @@ class Traverser(walker.Walker, object):
     pass
 
 def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
-    assert type(co) == types.CodeType
+    assert isinstance(co, types.CodeType)
     # store final output stream for case of error
     __real_out = out or sys.stdout
     if version == 2.7:
@@ -533,7 +542,7 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
             del ast[0]
         if ast[-1] == walker.RETURN_NONE:
             ast.pop() # remove last node
-            #todo: if empty, add 'pass'
+            # todo: if empty, add 'pass'
     except:
         pass
     walk.mod_globs = walker.find_globals(ast, set())
@@ -567,8 +576,8 @@ if __name__ == '__main__':
 
     def gcd(a, b):
         if a > b:
-           (a, b) = (b, a)
-           pass
+            (a, b) = (b, a)
+            pass
 
         if a <= 0:
             return None
@@ -578,5 +587,5 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     foo()
-    gcd(3,5)
+    # gcd(3,5)
     # deparse_test(inspect.currentframe().f_code)
