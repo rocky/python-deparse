@@ -1,3 +1,45 @@
+'''
+  Copyright (c) 1999 John Aycock
+  Copyright (c) 2000-2002 by hartmut Goebel <h.goebel@crazy-compilers.com>
+  Copyright (c) 2005 by Dan Pascu <dan@windowmaker.org>
+  Copyright (c) 2015 by Rocky Bernstein
+
+  See main module for license.
+
+
+  Decompilation (walking AST)
+
+  All table-driven.  Step 1 determines a table (T) and a path to a
+  table key (K) from the node type (N) (other nodes are shown as O):
+
+         N                  N               N&K
+     / | ... \          / | ... \        / | ... \
+    O  O      O        O  O      K      O  O      O
+              |
+              K
+
+  MAP_R0 (TABLE_R0)  MAP_R (TABLE_R)  MAP_DIRECT (TABLE_DIRECT)
+
+  The default is a direct mapping.  The key K is then extracted from the
+  subtree and used to find a table entry T[K], if any.  The result is a
+  format string and arguments (a la printf()) for the formatting engine.
+  Escapes in the format string are:
+
+    %c  evaluate N[A] recursively*
+    %C  evaluate N[A[0]]..N[A[1]-1] recursively, separate by A[2]*
+    %,  print ',' if last %C only printed one item (for tuples--unused)
+    %|  tab to current indentation level
+    %+ increase current indentation level
+    %- decrease current indentation level
+    %{...} evaluate ... in context of N
+    %% literal '%'
+
+  * indicates an argument (A) required.
+
+  The '%' may optionally be followed by a number (C) in square brackets, which
+  makes the engine walk down to N[C] before evaluating the escape code.
+'''
+
 from uncompyle2 import walker
 import sys, inspect, types, cStringIO, re
 
@@ -55,8 +97,9 @@ class Traverser(walker.Walker, object):
                  None)
 
     def set_pos_info(self, node, start, finish):
-        self.offsets[self.name, node.offset] = \
-          NodeInfo(node = node, start = start, finish = finish)
+        if hasattr(node, 'offset'):
+            self.offsets[self.name, node.offset] = \
+              NodeInfo(node = node, start = start, finish = finish)
         node.start  = start
         node.finish = finish
         self.last_finish = finish
@@ -65,8 +108,7 @@ class Traverser(walker.Walker, object):
         if node is None:
             node = self.ast
 
-        if hasattr(node, 'offset'):
-            start = len(self.f.getvalue())
+        start = len(self.f.getvalue())
 
         try:
             name = 'n_' + self.typestring(node)
@@ -80,10 +122,8 @@ class Traverser(walker.Walker, object):
             # seems to fit under this exception. If this is not true
             # we would need to dupllicate the below code before the
             # return outside of this block
-            if hasattr(node, 'offset'):
-                node.text = self.f.getvalue()
-                self.set_pos_info(node, start, len(self.f.getvalue()))
-                # print self.f.getvalue()[start:]
+            self.set_pos_info(node, start, len(self.f.getvalue()))
+            # print self.f.getvalue()[start:]
             return
 
         for kid in node:
@@ -94,11 +134,12 @@ class Traverser(walker.Walker, object):
         if hasattr(self, name):
             func = getattr(self, name)
             func(node)
+        self.set_pos_info(node, start, len(self.f.getvalue()))
 
         return
 
     def n_return_stmt(self, node):
-        start = self.last_finish
+        start = len(self.f.getvalue()) + len(self.indent)
         if self.__params['isLambda']:
             node[0].parent = node
             self.preorder(node[0])
@@ -118,15 +159,16 @@ class Traverser(walker.Walker, object):
                     self.set_pos_info(node[-1], start,
                         len(self.f.getvalue()))
                     node[-1].parent = node
+            self.set_pos_info(node, start, len(self.f.getvalue()))
             self.print_()
             self.prune() # stop recursing
 
     def n_return_if_stmt(self, node):
 
+        start = len(self.f.getvalue()) + len(self.indent)
         if self.__params['isLambda']:
             node[0].parent = node
             self.preorder(node[0])
-            self.prune()
         else:
             start = len(self.f.getvalue()) + len(self.indent)
             self.write(self.indent, 'return')
@@ -138,23 +180,149 @@ class Traverser(walker.Walker, object):
                     self.set_pos_info(node[-1], start, len(self.f.getvalue()))
                     node[-1].parent = node
             self.print_()
-            self.prune() # stop recursing
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune() # stop recursing
 
     def n_yield(self, node):
+        start = len(self.f.getvalue())
         self.write('yield')
         if node != AST('yield', [NONE, Token('YIELD_VALUE')]):
             self.write(' ')
             node[0].parent = node
             self.preorder(node[0])
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune() # stop recursing
+
+    def n_buildslice3(self, node):
+        start = len(self.f.getvalue())
+        p = self.prec
+        self.prec = 100
+        if node[0] != NONE:
+            self.preorder(node[0])
+        self.write(':')
+        if node[1] != NONE:
+            self.preorder(node[1])
+        self.write(':')
+        if node[2] != NONE:
+            self.preorder(node[2])
+        self.prec = p
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune() # stop recursing
+
+    def n_buildslice2(self, node):
+        start = len(self.f.getvalue())
+        p = self.prec
+        self.prec = 100
+        if node[0] != NONE:
+            node[0].parent = node
+            self.preorder(node[0])
+        self.write(':')
+        if node[1] != NONE:
+            node[1].parent = node
+            self.preorder(node[1])
+        self.prec = p
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune() # stop recursing
+
+    def n_expr(self, node):
+        start = len(self.f.getvalue())
+        p = self.prec
+        if node[0].type.startswith('binary_expr'):
+            n = node[0][-1][0]
+        else:
+            n = node[0]
+        self.prec = PRECEDENCE.get(n, -2)
+        if n == 'LOAD_CONST' and repr(n.pattr)[0] == '-':
+            n.parent = node
+            self.set_pos_info(n, start, len(self.f.getvalue()))
+            self.prec = 6
+        if p < self.prec:
+            self.write('(')
+            node[0].parent = node
+            self.last_finish = len(self.f.getvalue())
+            self.preorder(node[0])
+            self.write(')')
+            self.last_finish = len(self.f.getvalue())
+        else:
+            node[0].parent = node
+            self.preorder(node[0])
+        self.prec = p
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune()
+
+    def n_ret_expr(self, node):
+        start = len(self.f.getvalue())
+        if len(node) == 1 and node[0] == 'expr':
+            node[0].parent = node
+            self.n_expr(node[0])
+        else:
+            self.n_expr(node)
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+
+    def n_binary_expr(self, node):
+        start = len(self.f.getvalue())
+        node[0].parent = node
+        self.last_finish = len(self.f.getvalue())
+        self.preorder(node[0])
+        self.write(' ')
+        node[-1].parent = node
+        self.preorder(node[-1])
+        self.write(' ')
+        self.prec -= 1
+        node[1].parent = node
+        self.preorder(node[1])
+        self.prec += 1
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune()
+
+    def n_LOAD_CONST(self, node):
+        start = len(self.f.getvalue())
+        data = node.pattr; datatype = type(data)
+        if datatype is IntType and data == minint:
+            # convert to hex, since decimal representation
+            # would result in 'LOAD_CONST; UNARY_NEGATIVE'
+            # change:hG/2002-02-07: this was done for all negative integers
+            # todo: check whether this is necessary in Python 2.1
+            self.write( hex(data) )
+        elif datatype is EllipsisType:
+            self.write('...')
+        elif data is None:
+            # LOAD_CONST 'None' only occurs, when None is
+            # implicit eg. in 'return' w/o params
+            # pass
+            self.write('None')
+        else:
+            self.write(repr(data))
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        # LOAD_CONST is a terminal, so stop processing/recursing early
+        self.prune()
+
+    def n_exec_stmt(self, node):
+        """
+        exec_stmt ::= expr exprlist DUP_TOP EXEC_STMT
+        exec_stmt ::= expr exprlist EXEC_STMT
+        """
+        start = len(self.f.getvalue()) + len(self.indent)
+        self.write(self.indent, 'exec ')
+        self.preorder(node[0])
+        if node[1][0] != NONE:
+            sep = ' in '
+            for subnode in node[1]:
+                self.write(sep); sep = ", "
+                self.preorder(subnode)
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.print_()
         self.prune() # stop recursing
 
     def n_mkfunc(self, node):
+        start = len(self.f.getvalue())
         old_name = self.name
         self.name = node[-2].attr.co_name # code.co_name
         self.write(self.name)
         self.indentMore()
         self.make_function(node, isLambda=0)
         self.name = old_name
+        self.set_pos_info(node, start, len(self.f.getvalue()))
         if len(self.__param_stack) > 1:
             self.write('\n\n')
         else:
@@ -162,12 +330,80 @@ class Traverser(walker.Walker, object):
         self.indentLess()
         self.prune() # stop recursing
 
+    def n_elifelsestmtr(self, node):
+        if len(node[2]) != 2:
+            self.default(node)
+
+        for n in node[2][0]:
+            if not (n[0] == 'ifstmt' and n[0][1][0] == 'return_if_stmts'):
+                self.default(node)
+                return
+
+        start = len(self.f.getvalue() + self.indent)
+        self.write(self.indent, 'elif ')
+        node[0].parent = node
+        self.preorder(node[0])
+        self.print_(':')
+        self.indentMore()
+        node[1].parent = node
+        self.preorder(node[1])
+        self.indentLess()
+
+        if_ret_at_end = False
+        if len(node[2][0]) >= 3:
+            if node[2][0][-1][0] == 'ifstmt' and node[2][0][-1][0][1][0] == 'return_if_stmts':
+                if_ret_at_end = True
+
+        past_else = False
+        prev_stmt_is_if_ret = True
+        for n in node[2][0]:
+            n[0].type = 'elifstmt'
+            n.parent = node
+            self.preorder(n)
+        self.print_(self.indent, 'else:')
+        self.indentMore()
+        node[2][1].parent = node
+        self.preorder(node[2][1])
+        self.indentLess()
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune()
+
+    def n_import_as(self, node):
+        start = len(self.f.getvalue())
+        iname = node[0].pattr;
+        assert node[-1][-1].type.startswith('STORE_')
+        sname = node[-1][-1].pattr # assume one of STORE_.... here
+        node[-1][-1].parent = node
+        if iname == sname or iname.startswith(sname + '.'):
+            self.write(iname)
+        else:
+            self.write(iname, ' as ', sname)
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune() # stop recursing
+
+    def n_genexpr(self, node):
+        start = len(self.f.getvalue())
+        self.write('(')
+        self.comprehension_walk(node, 3)
+        self.write(')')
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune()
+
+    def n_setcomp(self, node):
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.write('{')
+        self.comprehension_walk(node, 4)
+        self.write('}')
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.prune()
+
     def n_classdef(self, node):
         # class definition ('class X(A,B,C):')
         cclass = self.currentclass
         self.currentclass = str(node[0].pattr)
 
         self.write('\n\n')
+        start = len(self.f.getvalue())
         self.write(self.indent, 'class ', self.currentclass)
         self.print_super_classes(node)
         self.print_(':')
@@ -178,6 +414,7 @@ class Traverser(walker.Walker, object):
         self.indentLess()
 
         self.currentclass = cclass
+        self.set_pos_info(node, start, len(self.f.getvalue()))
         if len(self.__param_stack) > 1:
             self.write('\n\n')
         else:
@@ -275,59 +512,16 @@ class Traverser(walker.Walker, object):
                            selectedLine = selectedLine,
                            selectedText = selectedText)
 
-    def n_expr(self, node):
-        p = self.prec
-        if hasattr(node, 'offset'):
-            print("n_expr has offset")
-        if node[0].type.startswith('binary_expr'):
-            n = node[0][-1][0]
-        else:
-            n = node[0]
-        self.prec = PRECEDENCE.get(n, -2)
-        if n == 'LOAD_CONST' and repr(n.pattr)[0] == '-':
-            self.prec = 6
-        if p < self.prec:
-            self.write('(')
-            node[0].parent = node
-            self.last_finish = len(self.f.getvalue())
-            self.preorder(node[0])
-            self.write(')')
-            self.last_finish = len(self.f.getvalue())
-        else:
-            node[0].parent = node
-            self.preorder(node[0])
-        self.prec = p
-        self.prune()
-
-    def n_binary_expr(self, node):
-        if hasattr(node, 'offset'):
-            print("expr has offset")
-        node[0].parent = node
-        self.last_finish = len(self.f.getvalue())
-        self.preorder(node[0])
-        self.write(' ')
-        self.last_finish = len(self.f.getvalue())
-        node[-1].parent = node
-        self.preorder(node[-1])
-        self.write(' ')
-        self.prec -= 1
-        node[1].parent = node
-        self.last_finish = len(self.f.getvalue())
-        self.preorder(node[1])
-        self.last_finish = len(self.f.getvalue())
-        self.prec += 1
-        self.prune()
-
     def engine(self, entry, startnode):
         # self.print_("-----")
         # self.print_(str(startnode.__dict__))
 
-        self.last_finish = len(self.f.getvalue())
-        startnode_start = self.last_finish
+        startnode_start = len(self.f.getvalue())
 
         fmt = entry[0]
         arg = 1
         i = 0
+        lastC = -1
 
         m = escape.search(fmt)
         while m:
@@ -343,7 +537,12 @@ class Traverser(walker.Walker, object):
                 print node.__dict__
                 raise
 
-            if   typ == '%': self.write('%')
+            if typ == '%':
+                node.parent = startnode
+                start = len(self.f.getvalue())
+                self.write('%')
+                self.set_pos_info(node, start, len(self.f.getvalue()))
+
             elif typ == '+': self.indentMore()
             elif typ == '-': self.indentLess()
             elif typ == '|': self.write(self.indent)
@@ -359,7 +558,10 @@ class Traverser(walker.Walker, object):
                 p = self.prec
                 (index, self.prec) = entry[arg]
                 node[index].parent = node
+                node.parent = startnode
+                start = len(self.f.getvalue())
                 self.preorder(node[index])
+                self.set_pos_info(node, start, len(self.f.getvalue()))
                 self.prec = p
                 arg += 1
             elif typ == 'C':
@@ -375,7 +577,7 @@ class Traverser(walker.Walker, object):
             elif typ == 'P':
                 p = self.prec
                 low, high, sep, self.prec = entry[arg]
-                remaining = len(node[low:high])
+                lastC = remaining = len(node[low:high])
                 start = self.last_finish
                 # remaining = len(node[low:high])
                 for subnode in node[low:high]:
@@ -388,29 +590,26 @@ class Traverser(walker.Walker, object):
                 arg += 1
                 call_fn = node.data[high]
                 call_fn.parent  = startnode
-                if hasattr(call_fn, 'offset'):
-                    self.set_pos_info(call_fn, start, len(self.f.getvalue()))
+                tail_len = len(fmt[i:])
+                self.set_pos_info(call_fn, start, len(self.f.getvalue())+tail_len)
 
             elif typ == '{':
                 d = node.__dict__
                 expr = m.group('expr')
                 try:
-                    start = self.last_finish
+                    node.parent = startnode
+                    start = len(self.f.getvalue())
                     self.write(eval(expr, d, d))
-                    if hasattr(node, 'offset'):
-                        self.set_pos_info(node, start, len(self.f.getvalue()))
-                        if not hasattr(node, 'parent'):
-                            node.parent = startnode
+                    self.set_pos_info(node, start, len(self.f.getvalue()))
                 except:
                     print node
                     raise
             m = escape.search(fmt, i)
             if hasattr(node, 'offset') and (self.name, node.offset) not in self.offsets:
-                print("Type %s of node %s has an offset %d" % (type, node, node.offset))
+                print("Type %s of node %s has an offset %d" % (typ, node, node.offset))
 
         self.write(fmt[i:])
-        if hasattr(startnode, 'offset'):
-            self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
+        self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
 
     def make_function(self, node, isLambda, nested=1):
         """Dump function defintion, doc string, and function body."""
@@ -562,7 +761,7 @@ def deparse_test(co):
     print walk.text, "\n"
     print '------------------------'
     for name, offset in sorted(walk.offsets.keys()):
-        print("name %s, offset %d" % (name, offset))
+        print("name %s, offset %s" % (name, offset))
         extractInfo = walk.extract_line_info(name, offset)
         # print extractInfo
         print extractInfo.selectedText
@@ -587,5 +786,5 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     foo()
-    # gcd(3,5)
+    gcd(3,5)
     # deparse_test(inspect.currentframe().f_code)
