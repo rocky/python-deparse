@@ -49,6 +49,7 @@ import sys, inspect, types, cStringIO, re
 from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
 from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
 from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
+from uncompyle2.walker import ParserError, MAP, MAP_DIRECT
 from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
@@ -101,8 +102,8 @@ class Traverser(walker.Walker, object):
 
     def set_pos_info(self, node, start, finish):
         if hasattr(node, 'offset'):
-            if type(node.offset) == type('string'):
-                from trepan.api import debug; debug()
+            # if isinstance(node.offset, type('string')):
+            #     pass
             self.offsets[self.name, node.offset] = \
               NodeInfo(node = node, start = start, finish = finish)
         node.start  = start
@@ -386,13 +387,6 @@ class Traverser(walker.Walker, object):
         self.preorder(node[1])
         self.indentLess()
 
-        if_ret_at_end = False
-        if len(node[2][0]) >= 3:
-            if node[2][0][-1][0] == 'ifstmt' and node[2][0][-1][0][1][0] == 'return_if_stmts':
-                if_ret_at_end = True
-
-        past_else = False
-        prev_stmt_is_if_ret = True
         for n in node[2][0]:
             n[0].type = 'elifstmt'
             n.parent = node
@@ -407,7 +401,7 @@ class Traverser(walker.Walker, object):
 
     def n_import_as(self, node):
         start = len(self.f.getvalue())
-        iname = node[0].pattr;
+        iname = node[0].pattr
         assert node[-1][-1].type.startswith('STORE_')
         sname = node[-1][-1].pattr # assume one of STORE_.... here
         node[-1][-1].parent = node
@@ -534,29 +528,46 @@ class Traverser(walker.Walker, object):
         # print('-' * 30)
 
         start, finish = (nodeInfo.start, nodeInfo.finish)
-        text = self.text
-        selectedText = text[start: finish]
 
+        text = self.text
+
+        # Ignore leading blanks
+        match = re.search(r'\s*[^ \t\n]', text[start:])
+        if match:
+            start += len(match.group(0))-1
+
+        selectedText = text[start:finish]
+
+        # Compute offsets relative to the beginning of the
+        # line rather than the beinning of the text
         try:
-            lineStart = text[:finish].rindex("\n") + 1
+            lineStart = text[:start].rindex("\n") + 1
         except ValueError:
             lineStart = 0
+        adjustedStart = start - lineStart
 
+        # If selected text is greater than a single line
+        # just show the first line plus elipses.
+        lines = selectedText.split("\n")
+        if len(lines) > 1:
+            adjustedEnd =  len(lines[0]) -  adjustedStart
+            selectedText = lines[0] + ' ...'
+        else:
+            adjustedEnd =  len(selectedText)
+
+        markerLine = ((' ' * adjustedStart) +
+                      ('-' * adjustedEnd))
+
+        if len(lines) > 1:
+            markerLine += ' ...'
+
+        # Get line that the selected text is in and
+        # get a line count for that.
         try:
             lineEnd = lineStart + text[lineStart+1:].index("\n") - 1
         except ValueError:
             lineEnd = len(text)
 
-        adjustedStart = start - lineStart
-
-        leadBlankMatch = re.match('^([ \n]+)',  selectedText)
-        if leadBlankMatch:
-            blankCount = len(leadBlankMatch.group(0))
-        else:
-            blankCount = 0
-
-        markerLine = ((' ' * (adjustedStart + blankCount)) +
-                      ('-' * (len(selectedText) - blankCount)))
         lines = text[:lineEnd].split("\n")
         selectedLine = text[lineStart:lineEnd+2]
 
@@ -606,15 +617,15 @@ class Traverser(walker.Walker, object):
             # kv2 ::= DUP_TOP expr expr ROT_THREE STORE_SUBSCR
             # kv3 ::= expr expr STORE_MAP
             if kv == 'kv':
-                name = self.traverse(kv[-2], indent='');
+                name = self.traverse(kv[-2], indent='')
                 kv[1].parent = node
                 value = self.traverse(kv[1], indent=self.indent+(len(name)+2)*' ')
             elif kv == 'kv2':
-                name = self.traverse(kv[1], indent='');
+                name = self.traverse(kv[1], indent='')
                 kv[-3].parent = node
                 value = self.traverse(kv[-3], indent=self.indent+(len(name)+2)*' ')
             elif kv == 'kv3':
-                name = self.traverse(kv[-2], indent='');
+                name = self.traverse(kv[-2], indent='')
                 kv[0].parent = node
                 value = self.traverse(kv[0], indent=self.indent+(len(name)+2)*' ')
             self.write(sep, name, ': ', value)
@@ -624,7 +635,6 @@ class Traverser(walker.Walker, object):
         self.indentLess(INDENT_PER_LEVEL)
         self.prec = p
         self.prune()
-
 
     def n_build_list(self, node):
         """
@@ -709,8 +719,14 @@ class Traverser(walker.Walker, object):
                 start = len(self.f.getvalue())
                 node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
-                ## print "XXX", node[entry[arg]]
-                self.set_pos_info(node, start, len(self.f.getvalue()))
+                finish = len(self.f.getvalue())
+                for n in node:
+                    if n == node[entry[arg]]:
+                        continue
+                    if hasattr(n, 'offset'):
+                        n.parent = node
+                        self.set_pos_info(n, startnode_start, finish)
+                self.set_pos_info(node, start, finish)
                 arg += 1
             elif typ == 'p':
                 p = self.prec
@@ -770,6 +786,23 @@ class Traverser(walker.Walker, object):
 
         self.write(fmt[i:])
         self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
+
+    # def default(self, node):
+    #    if hasattr(node, 'offset'):
+    #        # if isinstance(node.offset, type('string')):
+    #        #     pass
+    #        print "XXX3", node.offset
+
+    #    mapping = MAP.get(node, MAP_DIRECT)
+    #    table = mapping[0]
+    #    key = node
+
+    #    for i in mapping[1:]:
+    #        key = key[i]
+
+    #    if table.has_key(key):
+    #        self.engine(table[key], node)
+    #        self.prune()
 
     def make_function(self, node, isLambda, nested=1):
         """Dump function defintion, doc string, and function body."""
@@ -859,7 +892,7 @@ class Traverser(walker.Walker, object):
             self.print_(self.indent, 'global ', g)
         self.mod_globs -= all_globals
         rn = ('None' in code.co_names) and not find_none(ast)
-        self.gen_source(ast, code._customize, isLambda=isLambda, returnNone=rn)
+        self.walk_source(ast, code.co_name, code._customize, isLambda=isLambda, returnNone=rn)
         code._tokens = None; code._customize = None # save memory
 
     pass
@@ -895,10 +928,8 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
     assert ast == 'stmts'
     try:
         if ast[0][0] == walker.ASSIGN_DOC_STRING(co.co_consts[0]):
-            if find_offset == 0:
-                walk.print_docstring('', co.co_consts[0])
-                return
-            del ast[0]
+            # del ast[0]
+            pass
         if ast[-1] == walker.RETURN_NONE:
             ast.pop() # remove last node
             # todo: if empty, add 'pass'
@@ -934,6 +965,7 @@ if __name__ == '__main__':
         return
 
     def check_args():
+        "Just another docstring"
         deparse_test(inspect.currentframe().f_code)
         if len(sys.argv) != 3:
             # Rather than use sys.exit let's just raise an error
