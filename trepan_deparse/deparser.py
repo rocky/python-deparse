@@ -102,8 +102,8 @@ class Traverser(walker.Walker, object):
 
     def set_pos_info(self, node, start, finish):
         if hasattr(node, 'offset'):
-            # if isinstance(node.offset, type('string')):
-            #     pass
+            # if node.offset == 21:
+            #     from trepan.api import debug; debug()
             self.offsets[self.name, node.offset] = \
               NodeInfo(node = node, start = start, finish = finish)
         node.start  = start
@@ -547,12 +547,7 @@ class Traverser(walker.Walker, object):
         self.pending_newlines = p
         return text
 
-    def extract_line_info(self, name, offset):
-        if (name, offset) not in self.offsets.keys():
-            return None
-
-        nodeInfo  = self.offsets[name, offset]
-
+    def extract_node_info(self, nodeInfo):
         # XXX debug
         # print('-' * 30)
         # node = nodeInfo.node
@@ -565,7 +560,6 @@ class Traverser(walker.Walker, object):
         # print('-' * 30)
 
         start, finish = (nodeInfo.start, nodeInfo.finish)
-
         text = self.text
 
         # Ignore leading blanks
@@ -612,6 +606,27 @@ class Traverser(walker.Walker, object):
                            markerLine = markerLine,
                            selectedLine = selectedLine,
                            selectedText = selectedText)
+
+
+    def extract_line_info(self, name, offset):
+        if (name, offset) not in self.offsets.keys():
+            return None
+        return self.extract_node_info(self.offsets[name, offset])
+
+
+    def extract_parent_info(self, node):
+        if not hasattr(node, 'parent'):
+            return None
+        p = node.parent
+        while ((hasattr(p, 'parent') and \
+                p.start == node.start and p.finish == node.finish)):
+            # FIXME the below should be an assert. But we have
+            # a bug that needs to get fixed first.
+            if  p == node:
+                from trepan.api import debug; debug()
+            node = p
+            p = p.parent
+        return self.extract_node_info(p)
 
     def print_super_classes(self, node):
         node[1][0].parent = node
@@ -746,13 +761,13 @@ class Traverser(walker.Walker, object):
             node = startnode
             try:
                 if m.group('child'):
+                    node.parent = startnode
                     node = node[int(m.group('child'))]
             except:
                 print node.__dict__
                 raise
 
             if typ == '%':
-                node.parent = startnode
                 start = len(self.f.getvalue())
                 self.write('%')
                 self.set_pos_info(node, start, len(self.f.getvalue()))
@@ -768,20 +783,29 @@ class Traverser(walker.Walker, object):
                 start = len(self.f.getvalue())
                 node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
-                finish = len(self.f.getvalue()) + len(fmt[i:])
+                finish = len(self.f.getvalue())
+
+                # FIXME rocky: figure out how to get this to be table driven
+                # for loops have two positions that correspond to a single text
+                # location. In "for i in ..." there is the initialization "i" code as well
+                # as the iteration code with "i"
+                match = re.search(r'^for', startnode.type)
+                if match and entry[arg] == 3:
+                    for n in node[2]:
+                        n.parent = node[2]
+                        self.set_pos_info(n, start, finish)
+
                 for n in node:
                     if n == node[entry[arg]]:
                         continue
-                    if hasattr(n, 'offset'):
-                        n.parent = node
-                        self.set_pos_info(n, startnode_start, finish)
+                    n.parent = node
+                    self.set_pos_info(n, startnode_start, finish)
                 self.set_pos_info(node, start, finish)
                 arg += 1
             elif typ == 'p':
                 p = self.prec
                 (index, self.prec) = entry[arg]
                 node[index].parent = node
-                node.parent = startnode
                 start = len(self.f.getvalue())
                 self.preorder(node[index])
                 self.set_pos_info(node, start, len(self.f.getvalue()))
@@ -813,16 +837,11 @@ class Traverser(walker.Walker, object):
                         self.write(sep)
                 self.prec = p
                 arg += 1
-                call_fn = node.data[high]
-                call_fn.parent  = startnode
-                tail_len = len(fmt[i:])
-                self.set_pos_info(call_fn, start, len(self.f.getvalue())+tail_len)
 
             elif typ == '{':
                 d = node.__dict__
                 expr = m.group('expr')
                 try:
-                    node.parent = startnode
                     start = len(self.f.getvalue())
                     self.write(eval(expr, d, d))
                     self.set_pos_info(node, start, len(self.f.getvalue()))
@@ -1002,29 +1021,34 @@ def deparse_test(co):
     print '------------------------'
     for name, offset in sorted(walk.offsets.keys()):
         print("name %s, offset %s" % (name, offset))
-        extractInfo = walk.extract_line_info(name, offset)
+        nodeInfo = walk.offsets[name, offset]
+        node = nodeInfo.node
+        extractInfo = walk.extract_node_info(node)
         # print extractInfo
         print extractInfo.selectedText
         print extractInfo.selectedLine
         print extractInfo.markerLine
+        extractInfo = walk.extract_parent_info(node)
+        if extractInfo:
+            print "Contained in..."
+            print  extractInfo.selectedLine
+            print extractInfo.markerLine
+            pass
+        pass
+    return
 
 if __name__ == '__main__':
     def foo():
         x = inspect.currentframe().f_code
-        y = {}
         deparse_test(x)
-        return y
 
-    def check_args():
+    def check_args(args):
         deparse_test(inspect.currentframe().f_code)
-        if len(sys.argv) != 3:
-            # Rather than use sys.exit let's just raise an error
-            raise Exception("Need to give two numbers")
         for i in range(2):
             try:
-                sys.argv[i+1] = int(sys.argv[i+1])
+                x  = int(args[i])
             except ValueError:
-                print("** Expecting an integer, got: %s" % repr(sys.argv[i]))
+                print("** Expecting an integer, got: %s" % repr(argv[i]))
                 sys.exit(2)
                 pass
             pass
@@ -1041,7 +1065,7 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    foo()
+    # foo()
     # gcd(3,5)
-    # check_args()
+    check_args(['3', '5'])
     # deparse_test(inspect.currentframe().f_code)
