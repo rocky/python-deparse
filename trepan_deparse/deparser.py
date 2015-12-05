@@ -428,6 +428,43 @@ class Traverser(walker.Walker, object):
         self.indentLess()
         self.prune() # stop recursing
 
+    def comprehension_walk(self, node, iter_index):
+        p = self.prec
+        self.prec = 27
+        code = node[-5].attr
+
+        assert type(code) == CodeType
+        code = Code(code, self.scanner, self.currentclass)
+        #assert isinstance(code, Code)
+
+        ast = self.build_ast(code._tokens, code._customize)
+        self.customize(code._customize)
+        ast = ast[0][0][0]
+
+        n = ast[iter_index]
+        assert n == 'comp_iter'
+        # find innerst node
+        while n == 'comp_iter':
+            n = n[0] # recurse one step
+            if   n == 'comp_for':	n = n[3]
+            elif n == 'comp_if':	n = n[2]
+            elif n == 'comp_ifnot': n = n[2]
+        assert n == 'comp_body', ast
+
+        self.preorder(n[0])
+        self.write(' for ')
+        start = len(self.f.getvalue())
+        node[inter_index-1].parent = node
+        self.preorder(ast[iter_index-1])
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.write(' in ')
+        start = len(self.f.getvalue())
+        node[-3].parent = node
+        self.preorder(node[-3])
+        self.set_pos_info(node, start, len(self.f.getvalue()))
+        self.preorder(ast[iter_index])
+        self.prec = p
+
     def n_genexpr(self, node):
         start = len(self.f.getvalue())
         self.write('(')
@@ -599,39 +636,43 @@ class Traverser(walker.Walker, object):
         prettyprint a mapexpr
         'mapexpr' is something like k = {'a': 1, 'b': 42 }"
         """
-        start = len(self.f.getvalue())
         p = self.prec
         self.prec = 100
         assert node[-1] == 'kvlist'
-        node[-1].parent = node
-        node = node[-1] # goto kvlist
+        kv_node = node[-1] # goto kvlist
 
         self.indentMore(INDENT_PER_LEVEL)
         line_seperator = ',\n' + self.indent
         sep = INDENT_PER_LEVEL[:-1]
+        # print "\nFOO"
+        # from trepan.api import debug; debug()
         start = len(self.f.getvalue())
         self.write('{')
-        for kv in node:
+        for kv in kv_node:
             assert kv in ('kv', 'kv2', 'kv3')
             # kv ::= DUP_TOP expr ROT_TWO expr STORE_SUBSCR
             # kv2 ::= DUP_TOP expr expr ROT_THREE STORE_SUBSCR
             # kv3 ::= expr expr STORE_MAP
             if kv == 'kv':
                 name = self.traverse(kv[-2], indent='')
-                kv[1].parent = node
+                kv[1].parent = kv_node
                 value = self.traverse(kv[1], indent=self.indent+(len(name)+2)*' ')
             elif kv == 'kv2':
                 name = self.traverse(kv[1], indent='')
-                kv[-3].parent = node
+                kv[-3].parent = kv_node
                 value = self.traverse(kv[-3], indent=self.indent+(len(name)+2)*' ')
             elif kv == 'kv3':
                 name = self.traverse(kv[-2], indent='')
-                kv[0].parent = node
+                kv[0].parent = kv_node
                 value = self.traverse(kv[0], indent=self.indent+(len(name)+2)*' ')
             self.write(sep, name, ': ', value)
             sep = line_seperator
         self.write('}')
-        self.set_pos_info(node, start, len(self.f.getvalue()))
+        finish = len(self.f.getvalue())
+        for n in node:
+            n.parent = node
+            self.set_pos_info(n, start, finish)
+        self.set_pos_info(node, start, finish)
         self.indentLess(INDENT_PER_LEVEL)
         self.prec = p
         self.prune()
@@ -642,7 +683,8 @@ class Traverser(walker.Walker, object):
         """
         p = self.prec
         self.prec = 100
-        lastnode = node.pop().type
+        n = node.pop()
+        lastnode = n.type
         start = len(self.f.getvalue())
         if lastnode.startswith('BUILD_LIST'):
             self.write('['); endchar = ']'
@@ -672,12 +714,19 @@ class Traverser(walker.Walker, object):
         if len(node) == 1 and lastnode.startswith('BUILD_TUPLE'):
             self.write(',')
         self.write(endchar)
-        self.set_pos_info(node, start, len(self.f.getvalue()))
+        finish = len(self.f.getvalue())
+        self.set_pos_info(n, start, finish)
+        self.set_pos_info(node, start, finish)
         self.indentLess(INDENT_PER_LEVEL)
         self.prec = p
         self.prune()
 
     def engine(self, entry, startnode):
+        '''The format template interpetation engine.  See the comment at the
+        beginning of this module for the how we interpret format specifications such as
+        %c, %C, and so on.
+        '''
+
         # self.print_("-----")
         # self.print_(str(startnode.__dict__))
 
@@ -719,7 +768,7 @@ class Traverser(walker.Walker, object):
                 start = len(self.f.getvalue())
                 node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
-                finish = len(self.f.getvalue())
+                finish = len(self.f.getvalue()) + len(fmt[i:])
                 for n in node:
                     if n == node[entry[arg]]:
                         continue
@@ -961,11 +1010,12 @@ def deparse_test(co):
 
 if __name__ == '__main__':
     def foo():
-        deparse_test(inspect.currentframe().f_code)
-        return
+        x = inspect.currentframe().f_code
+        y = {}
+        deparse_test(x)
+        return y
 
     def check_args():
-        "Just another docstring"
         deparse_test(inspect.currentframe().f_code)
         if len(sys.argv) != 3:
             # Rather than use sys.exit let's just raise an error
@@ -991,7 +1041,7 @@ if __name__ == '__main__':
             return a
         return gcd(b-a, a)
 
-    # foo()
+    foo()
     # gcd(3,5)
-    check_args()
+    # check_args()
     # deparse_test(inspect.currentframe().f_code)
