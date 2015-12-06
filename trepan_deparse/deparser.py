@@ -63,10 +63,10 @@ ExtractInfo = namedtuple("ExtractInfo",
 class Traverser(walker.Walker, object):
     stacked_params = ('f', 'indent', 'isLambda', '_globals')
 
-    def __init__(self, out, scanner, showast=0):
+    def __init__(self, scanner, showast=0):
         GenericASTTraversal.__init__(self, ast=None)
         self.scanner = scanner
-        params = {'f': out, 'indent': '', }
+        params = {'f': cStringIO.StringIO(), 'indent': '', }
         self.showast = showast
         self.__params = params
         self.__param_stack = []
@@ -102,10 +102,14 @@ class Traverser(walker.Walker, object):
 
     def set_pos_info(self, node, start, finish):
         if hasattr(node, 'offset'):
-            # if node.offset == 21:
-            #     from trepan.api import debug; debug()
             self.offsets[self.name, node.offset] = \
               NodeInfo(node = node, start = start, finish = finish)
+
+            # if node.type == 'LOAD_FAST':
+            #     from trepan.api import debug; debug()
+        if hasattr(node, 'parent'):
+            assert node.parent != node
+
         node.start  = start
         node.finish = finish
         self.last_finish = finish
@@ -135,6 +139,10 @@ class Traverser(walker.Walker, object):
         for kid in node:
             kid.parent = node
             self.preorder(kid)
+            # If kid didn't advance printing, then
+            # give it the same range as this node.
+            if kid.start == kid.finish:
+                kid.start = start
 
         name = name + '_exit'
         if hasattr(self, name):
@@ -160,6 +168,7 @@ class Traverser(walker.Walker, object):
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_VALUE')]):
                 self.write(' ')
                 node[0].parent = node
+                self.last_finish = len(self.f.getvalue())
                 self.preorder(node[0])
                 if hasattr(node[-1], 'offset'):
                     self.set_pos_info(node[-1], start,
@@ -536,7 +545,6 @@ class Traverser(walker.Walker, object):
             'indent': indent,
             'isLambda': isLambda,
             }
-        self.last_finish = self.f.getvalue()
         self.preorder(node)
         self.f.write('\n'*self.pending_newlines)
 
@@ -561,6 +569,8 @@ class Traverser(walker.Walker, object):
 
         start, finish = (nodeInfo.start, nodeInfo.finish)
         text = self.text
+
+        # from trepan.api import debug; debug()
 
         # Ignore leading blanks
         match = re.search(r'\s*[^ \t\n]', text[start:])
@@ -620,10 +630,7 @@ class Traverser(walker.Walker, object):
         p = node.parent
         while ((hasattr(p, 'parent') and \
                 p.start == node.start and p.finish == node.finish)):
-            # FIXME the below should be an assert. But we have
-            # a bug that needs to get fixed first.
-            if  p == node:
-                from trepan.api import debug; debug()
+            assert p != node
             node = p
             p = p.parent
         return self.extract_node_info(p)
@@ -730,6 +737,7 @@ class Traverser(walker.Walker, object):
             self.write(',')
         self.write(endchar)
         finish = len(self.f.getvalue())
+        n.parent = node.parent
         self.set_pos_info(n, start, finish)
         self.set_pos_info(node, start, finish)
         self.indentLess(INDENT_PER_LEVEL)
@@ -761,8 +769,8 @@ class Traverser(walker.Walker, object):
             node = startnode
             try:
                 if m.group('child'):
-                    node.parent = startnode
                     node = node[int(m.group('child'))]
+                    node.parent = startnode
             except:
                 print node.__dict__
                 raise
@@ -965,7 +973,7 @@ class Traverser(walker.Walker, object):
 
     pass
 
-def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
+def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
     assert isinstance(co, types.CodeType)
     # store final output stream for case of error
     __real_out = out or sys.stdout
@@ -983,7 +991,7 @@ def deparse(version, co, out=sys.stdout, showasm=0, showast=0):
 
     #  Build AST from disassembly.
     # walk = walker.Walker(out, scanner, showast=showast)
-    walk = Traverser(out, scanner, showast=showast)
+    walk = Traverser(scanner, showast=showast)
 
     try:
         ast = walk.build_ast(tokens, customize)
