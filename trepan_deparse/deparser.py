@@ -532,8 +532,34 @@ class Traverser(walker.Walker, object):
             self.text = self.traverse(ast, isLambda=isLambda)
         self.return_none = rn
 
+    # FIXME: revise to do *once* over the entire tree.
+    # So here we should just mark that the subtree
+    # needs offset adjustment.
+    def fixup_offsets(self, new_start, node):
+        """Adjust all offsets under node"""
+        if hasattr(node, 'start'):
+            node.start += new_start
+            node.finish += new_start
+        for n in node:
+            if hasattr(n, 'offset'):
+                if hasattr(n, 'start'):
+                    n.start += new_start
+                    n.finish += new_start
+            else:
+                self.fixup_offsets(new_start, n)
+        return
+
+    def node_append(self, before_str, node_text, node):
+        self.write(before_str)
+        self.last_finish = len(self.f.getvalue())
+        self.fixup_offsets(self.last_finish, node)
+        self.write(node_text)
+        self.last_finish = len(self.f.getvalue())
+
     # FIXME; below duplicated the code, since we don't find self.__params
     def traverse(self, node, indent=None, isLambda=0):
+        '''Buulds up fragment which can be used inside a larger
+        block of code'''
 
         self.__param_stack.append(self.__params)
         if indent is None: indent = self.indent
@@ -553,6 +579,7 @@ class Traverser(walker.Walker, object):
 
         self.__params = self.__param_stack.pop()
         self.pending_newlines = p
+
         return text
 
     def extract_node_info(self, nodeInfo):
@@ -647,7 +674,8 @@ class Traverser(walker.Walker, object):
         sep = ''
         for elem in node[:-1]:
             value = self.traverse(elem)
-            self.write(sep, value)
+            self.node_append(sep, value, elem)
+            # self.write(sep, value)
             sep = line_separator
 
         self.write(')')
@@ -731,7 +759,7 @@ class Traverser(walker.Walker, object):
 
             assert elem == 'expr'
             value = self.traverse(elem)
-            self.write(sep, value)
+            self.node_append(sep, value, elem)
             sep = line_separator
         if len(node) == 1 and lastnode.startswith('BUILD_TUPLE'):
             self.write(',')
@@ -899,6 +927,8 @@ class Traverser(walker.Walker, object):
                     print '--', name
                     print default
                     print '--'
+                    pass
+                ## FIXME: use node_append
                 result = '%s = %s' % (name, self.traverse(default, indent='') )
                 if result[-2:] == '= ':	# default was 'LOAD_CONST None'
                     result += 'None'
@@ -1021,34 +1051,35 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
 
     return walk
 
-def deparse_test(co):
-    # co = inspect.currentframe().f_code
-    # uncompyle(2.7, co, sys.stdout, 1)
-    walk = deparse(2.7, co, showasm=1, showast=1)
-    print walk.text, "\n"
-    print '------------------------'
-    for name, offset in sorted(walk.offsets.keys()):
-        print("name %s, offset %s" % (name, offset))
-        nodeInfo = walk.offsets[name, offset]
-        node = nodeInfo.node
-        extractInfo = walk.extract_node_info(node)
-        # print extractInfo
-        print extractInfo.selectedText
-        print extractInfo.selectedLine
-        print extractInfo.markerLine
-        extractInfo = walk.extract_parent_info(node)
-        if extractInfo:
-            print "Contained in..."
-            print  extractInfo.selectedLine
-            print extractInfo.markerLine
-            pass
-        pass
-    return
-
 if __name__ == '__main__':
-    def foo():
-        x = inspect.currentframe().f_code
-        deparse_test(x)
+
+    def deparse_test(co):
+        # co = inspect.currentframe().f_code
+        # uncompyle(2.7, co, sys.stdout, 1)
+        walk = deparse(2.7, co, showasm=1, showast=1)
+        print walk.text, "\n"
+        print '------------------------'
+        for name, offset in sorted(walk.offsets.keys()):
+            print("name %s, offset %s" % (name, offset))
+            nodeInfo = walk.offsets[name, offset]
+            node = nodeInfo.node
+            extractInfo = walk.extract_node_info(node)
+            # print extractInfo
+            print extractInfo.selectedText
+            print extractInfo.selectedLine
+            print extractInfo.markerLine
+            extractInfo = walk.extract_parent_info(node)
+            if extractInfo:
+                print "Contained in..."
+                print  extractInfo.selectedLine
+                print extractInfo.markerLine
+                pass
+            pass
+        return
+
+
+    def get_code_for_fn(fn):
+        return fn.__code__
 
     def check_args(args):
         deparse_test(inspect.currentframe().f_code)
@@ -1069,11 +1100,10 @@ if __name__ == '__main__':
         if a <= 0:
             return None
         if a == 1 or a == b:
-            deparse_test(inspect.currentframe().f_code)
             return a
         return gcd(b-a, a)
 
-    # foo()
-    # gcd(3,5)
-    check_args(['3', '5'])
+    # check_args(['3', '5'])
+    # deparse_test(get_code_for_fn(gcd))
+    deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)

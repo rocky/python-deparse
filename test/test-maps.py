@@ -36,8 +36,12 @@ class TestMaps(unittest.TestCase):
             node = nodeInfo.node
             extractInfo = parsed.extract_node_info(node)
 
-            # self.assertEqual(expect[i], extractInfo.selectedLine)
-            # self.assertEqual(expect[i+1], extractInfo.markerLine)
+            self.assertEqual(expect[i], extractInfo.selectedLine,
+                             'line %s expect:\n%s\ngot:s\n%s' %
+                             (i, expect[i], extractInfo.selectedLine))
+            self.assertEqual(expect[i+1], extractInfo.markerLine,
+                             'line %s expect:\n%s\ngot:\n%s' %
+                             (i+1, expect[i+1], extractInfo.markerLine))
             i += 3
             if debug:
                 print(node.offset)
@@ -46,9 +50,11 @@ class TestMaps(unittest.TestCase):
 
             extractInfo = parsed.extract_parent_info(node)
             if extractInfo:
-                self.assertTrue(i+1 < max_expect, "ran out of times in testing parent")
-                # self.assertEqual(expect[i], extractInfo.selectedLine)
-                # self.assertEqual(expect[i+1], extractInfo.markerLine)
+                self.assertTrue(i+1 < max_expect, "ran out of items in testing parent")
+                self.assertEqual(expect[i], extractInfo.selectedLine,
+                                 "parent line %s" % i)
+                self.assertEqual(expect[i+1], extractInfo.markerLine,
+                                 "parent line %s" % (i+1))
                 if debug:
                     print("Contained in...")
                     print(extractInfo.selectedLine)
@@ -94,18 +100,27 @@ Contained in...
 return (x, y)
 -------------
 return (x, y)
+        -
+Contained in...
+return (x, y)
+        -
+return (x, y)
+           -
+Contained in...
+return (x, y)
+           -
+return (x, y)
        ------
 Contained in...
 return (x, y)
 -------------
-Contained in...
 return (x, y)
 -------------
 Contained in...
 return (x, y)
 -------------
 """.split("\n")
-        # self.check_expect(expect, parsed)
+        self.check_expect(expect, parsed)
         return
 
 

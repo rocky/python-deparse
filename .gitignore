@@ -4,5 +4,6 @@
 /build
 /dist
 /python_deparse.egg-info
+/tmp
 /trepan.egg-info
 /trepan_deparse.egg-info
