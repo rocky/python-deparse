@@ -62,7 +62,6 @@ from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
 
-from uncompyle2.Scanner import Token, Code
 try:
      from uncompyle2.Scanner import Token, Code
      older_uncompyle = True
