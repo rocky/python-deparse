@@ -42,22 +42,33 @@
 
 try:
     from uncompyle2 import walker
+    from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
+    from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
+    from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
+    from uncompyle2.walker import ParserError
 except ImportError:
     from uncompyle2 import Walker as walker
+    from uncompyle2.Walker import escape, PRECEDENCE, IntType, minint
+    from uncompyle2.Walker import EllipsisType, AST, NONE, find_all_globals
+    from uncompyle2.Walker import find_globals, find_none, INDENT_PER_LEVEL
+    from uncompyle2.Walker import ParserError
 
 import sys, inspect, types, cStringIO, re
 
 
 # FIXME: remove uncompyle dups
 # from uncompyle2.walker import find_all_globals, find_globals, find_none
-from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
-from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
-from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
-from uncompyle2.walker import ParserError
 from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
-from scanner import Token, Code
+
+from uncompyle2.Scanner import Token, Code
+try:
+     from uncompyle2.Scanner import Token, Code
+     older_uncompyle = True
+except ImportError:
+     from uncompyle2.scanner import Token, Code
+     older_uncompyle = False
 
 from collections import namedtuple
 NodeInfo = namedtuple("NodeInfo", "node start finish")
@@ -1064,15 +1075,20 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
     assert isinstance(co, types.CodeType)
     # store final output stream for case of error
     __real_out = out or sys.stdout
-    if version == 2.7:
-        import uncompyle2.scanner27 as scan
-        scanner = scan.Scanner27()
-    elif version == 2.6:
-        import scanner26 as scan
-        scanner = scan.Scanner26()
-    elif version == 2.5:
-        import scanner25 as scan
-        scanner = scan.Scanner25()
+    try:
+        import uncompyle2.Scanner as scan
+        scanner = scan.Scanner(version)
+    except ImportError:
+        if version == 2.7:
+            import uncompyle2.scanner27 as scan
+            scanner = scan.Scanner27()
+        elif version == 2.6:
+            import scanner26 as scan
+            scanner = scan.Scanner26()
+        elif version == 2.5:
+            import scanner25 as scan
+            scanner = scan.Scanner25()
+
     scanner.setShowAsm(showasm, out)
     tokens, customize = scanner.disassemble(co)
 
@@ -1081,7 +1097,10 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
     walk = Traverser(scanner, showast=showast)
 
     try:
-        walk.ast = walk.build_ast(tokens, customize)
+        if older_uncompyle:
+            walk.ast = walk.build_ast(tokens, customize)
+        else:
+            walk.ast = walk.build_ast(tokens, customize)
     except walker.ParserError, e :  # parser failed, dump disassembly
         print >>__real_out, e
         raise
