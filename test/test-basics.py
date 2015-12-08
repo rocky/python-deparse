@@ -14,12 +14,18 @@ class TestMaps(unittest.TestCase):
     def setup(self):
         self.sys_version = version_info.major + (version_info.minor / 10.0)
 
-    def return_stmt(x, y):
-        return x, y
-
     def map_stmts(x, y):
         x = []
         y = {}
+
+    def return_stmt(x, y):
+            return x, y
+
+    def try_stmt():
+        try:
+            x = 1
+        except:
+            pass
 
     def get_parsed_for_fn(self, fn):
         return deparser.deparse(self.sys_version,
@@ -48,13 +54,15 @@ class TestMaps(unittest.TestCase):
                 print(extractInfo.selectedLine)
                 print(extractInfo.markerLine)
 
-            extractInfo = parsed.extract_parent_info(node)
+            extractInfo, p = parsed.extract_parent_info(node)
             if extractInfo:
                 self.assertTrue(i+1 < max_expect, "ran out of items in testing parent")
                 self.assertEqual(expect[i], extractInfo.selectedLine,
-                                 "parent line %s" % i)
+                                 "parent line %s expect:\n%s\ngot:\n%s" %
+                                 (i, expect[i], extractInfo.selectedLine))
                 self.assertEqual(expect[i+1], extractInfo.markerLine,
-                                 "parent line %s" % (i+1))
+                                 "parent line %s expect:\n%s\ngot:\n%s" %
+                                 (i+1, expect[i+1], extractInfo.markerLine))
                 if debug:
                     print("Contained in...")
                     print(extractInfo.selectedLine)
@@ -90,12 +98,12 @@ y = {}
 ------
 """.split("\n")
         self.check_expect(expect, parsed)
-
         ########################################################
+
         parsed = self.get_parsed_for_fn(self.return_stmt)
         expect = """
 return (x, y)
--------------
+             ^
 Contained in...
 return (x, y)
 -------------
@@ -103,12 +111,12 @@ return (x, y)
         -
 Contained in...
 return (x, y)
-        -
+       ------
 return (x, y)
            -
 Contained in...
 return (x, y)
-           -
+       ------
 return (x, y)
        ------
 Contained in...
@@ -120,6 +128,56 @@ Contained in...
 return (x, y)
 -------------
 """.split("\n")
+        self.check_expect(expect, parsed)
+        ########################################################
+
+        expect = """
+try:
+----
+Contained in...
+try: ...
+---- ...
+    x = 1
+        -
+Contained in...
+    x = 1
+    -----
+    x = 1
+    -
+Contained in...
+    x = 1
+    -----
+    pass
+        ^
+Contained in...
+try: ...
+---- ...
+except:
+        ^
+Contained in...
+except: ...
+------- ...
+    pass
+        ^
+Contained in...
+except: ...
+------- ...
+except:
+        ^
+Contained in...
+except: ...
+------- ...
+    pass
+        ^
+Contained in...
+except: ...
+------- ...
+    pass
+        ^
+Contained in...
+except: ...
+""".split("\n")
+        parsed = self.get_parsed_for_fn(self.try_stmt)
         self.check_expect(expect, parsed)
         return
 

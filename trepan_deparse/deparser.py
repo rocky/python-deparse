@@ -105,8 +105,6 @@ class Traverser(walker.Walker, object):
             self.offsets[self.name, node.offset] = \
               NodeInfo(node = node, start = start, finish = finish)
 
-            # if node.type == 'LOAD_FAST':
-            #     from trepan.api import debug; debug()
         if hasattr(node, 'parent'):
             assert node.parent != node
 
@@ -139,10 +137,6 @@ class Traverser(walker.Walker, object):
         for kid in node:
             kid.parent = node
             self.preorder(kid)
-            # If kid didn't advance printing, then
-            # give it the same range as this node.
-            if kid.start == kid.finish:
-                kid.start = start
 
         name = name + '_exit'
         if hasattr(self, name):
@@ -518,9 +512,6 @@ class Traverser(walker.Walker, object):
     def walk_source(self, ast, name, customize, isLambda=0, returnNone=False):
         """convert AST to source code"""
 
-        # FIXME; the below doesn't find self.__params
-        # So we duplicate the code.
-        # self.gen_source(ast, customize, isLambda, returnNone)
         rn = self.return_none
         self.return_none = returnNone
         self.name = name
@@ -531,6 +522,34 @@ class Traverser(walker.Walker, object):
             self.customize(customize)
             self.text = self.traverse(ast, isLambda=isLambda)
         self.return_none = rn
+
+    # FIXME: we could provide another customized routine
+    # that fixes up parents along a particular path to a node that
+    # we are interested in.
+    def fixup_parents(self, node, parent):
+        """Make sure each node has a parent"""
+        start, finish = 0, self.last_finish
+        # We assume anything with a start has a finish.
+        needs_range = not hasattr(node, 'start')
+
+        if not hasattr(node, 'parent'):
+            node.parent = parent
+
+        for n in node:
+            if needs_range and hasattr(n, 'start'):
+                if n.start < start: start = n.start
+                if n.finish > finish: finish = n.finish
+
+            if hasattr(n, 'offset') and not hasattr(n, 'parent'):
+                n.parent = node
+            else:
+                self.fixup_parents(n, node)
+                pass
+            pass
+        if needs_range:
+            node.start, node.finish = start, finish
+
+        return
 
     # FIXME: revise to do *once* over the entire tree.
     # So here we should just mark that the subtree
@@ -597,14 +616,23 @@ class Traverser(walker.Walker, object):
         start, finish = (nodeInfo.start, nodeInfo.finish)
         text = self.text
 
-        # from trepan.api import debug; debug()
+        # Ignore trailing blanks
+        match = re.search(r'\n+$', text[start:])
+        if match:
+            text = text[:-len(match.group(0))]
 
         # Ignore leading blanks
         match = re.search(r'\s*[^ \t\n]', text[start:])
         if match:
             start += len(match.group(0))-1
 
-        selectedText = text[start:finish]
+        at_end = False
+        if start  >= finish:
+            at_end = True
+            selectedText = text
+        else:
+            selectedText = text[start:finish]
+
 
         # Compute offsets relative to the beginning of the
         # line rather than the beinning of the text
@@ -619,14 +647,19 @@ class Traverser(walker.Walker, object):
         lines = selectedText.split("\n")
         if len(lines) > 1:
             adjustedEnd =  len(lines[0]) -  adjustedStart
-            selectedText = lines[0] + ' ...'
+            selectedText = lines[0] + " ...\n" + lines[-1]
         else:
             adjustedEnd =  len(selectedText)
 
-        markerLine = ((' ' * adjustedStart) +
-                      ('-' * adjustedEnd))
+        if at_end:
+            markerLine = (' ' * len(lines[-1])) + '^'
+        else:
+            markerLine = ((' ' * adjustedStart) +
+                          ('-' * adjustedEnd))
 
-        if len(lines) > 1:
+        elided = False
+        if len(lines) > 1 and not at_end:
+            elided = True
             markerLine += ' ...'
 
         # Get line that the selected text is in and
@@ -637,7 +670,10 @@ class Traverser(walker.Walker, object):
             lineEnd = len(text)
 
         lines = text[:lineEnd].split("\n")
+
         selectedLine = text[lineStart:lineEnd+2]
+
+        if elided: selectedLine += ' ...'
 
         return ExtractInfo(lineNo = len(lines), lineStartOffset = lineStart,
                            markerLine = markerLine,
@@ -655,12 +691,16 @@ class Traverser(walker.Walker, object):
         if not hasattr(node, 'parent'):
             return None
         p = node.parent
-        while ((hasattr(p, 'parent') and \
-                p.start == node.start and p.finish == node.finish)):
+        orig_parent = p
+        # If we can get different text, use that as the parent,
+        # otherwise we'll use the immeditate parent
+        while (p and (hasattr(p, 'parent') and
+                    p.start == node.start and p.finish == node.finish)):
             assert p != node
             node = p
             p = p.parent
-        return self.extract_node_info(p)
+        if p is None: p = orig_parent
+        return self.extract_node_info(p), p
 
     def print_super_classes(self, node):
         node[1][0].parent = node
@@ -817,7 +857,6 @@ class Traverser(walker.Walker, object):
                     self.write(',')
             elif typ == 'c':
                 start = len(self.f.getvalue())
-                node[entry[arg]].parent = node
                 self.preorder(node[entry[arg]])
                 finish = len(self.f.getvalue())
 
@@ -831,11 +870,6 @@ class Traverser(walker.Walker, object):
                         n.parent = node[2]
                         self.set_pos_info(n, start, finish)
 
-                for n in node:
-                    if n == node[entry[arg]]:
-                        continue
-                    n.parent = node
-                    self.set_pos_info(n, startnode_start, finish)
                 self.set_pos_info(node, start, finish)
                 arg += 1
             elif typ == 'p':
@@ -887,6 +921,17 @@ class Traverser(walker.Walker, object):
             m = escape.search(fmt, i)
             if hasattr(node, 'offset') and (self.name, node.offset) not in self.offsets:
                 print("Type %s of node %s has an offset %d" % (typ, node, node.offset))
+                pass
+            pass
+
+        # FIXME rocky: figure out how to get this to be table driven
+        # for loops have two positions that correspond to a single text
+        # location. In "for i in ..." there is the initialization "i" code as well
+        # as the iteration code with "i"
+        match = re.search(r'^try', startnode.type)
+        if match:
+            self.set_pos_info(node[0], startnode_start, startnode_start+len("try:"))
+            self.set_pos_info(node[2], node[3].finish, node[3].finish)
 
         self.write(fmt[i:])
         self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
@@ -928,13 +973,18 @@ class Traverser(walker.Walker, object):
                     print default
                     print '--'
                     pass
-                ## FIXME: use node_append
-                result = '%s = %s' % (name, self.traverse(default, indent='') )
+                result = '%s = ' % name
+                old_last_finish = self.last_finish
+                self.last_finish = len(result)
+                value = self.traverse(default, indent='')
+                self.last_finish = old_last_finish
+                result += value
                 if result[-2:] == '= ':	# default was 'LOAD_CONST None'
                     result += 'None'
                 return result
             else:
                 return name
+
         defparams = node[:node[-1].attr] # node[-1] == MAKE_xxx_n
         code = node[-2].attr
 
@@ -966,10 +1016,13 @@ class Traverser(walker.Walker, object):
         # params = map(lambda name, default: build_param(ast, name, default),
         # paramnames, defparams)
         params = []
+        nodes = []
         for name, default in map(lambda a, b: (a, b), paramnames, defparams):
+            nodes.append(default)
             params.append( build_param(ast, name, default) )
 
         params.reverse() # back to correct order
+        nodes.reverse() # back to correct order
 
         if 4 & code.co_flags:	# flag 2 -> variable number of args
             params.append('*%s' % code.co_varnames[argc])
@@ -1024,26 +1077,28 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
     walk = Traverser(scanner, showast=showast)
 
     try:
-        ast = walk.build_ast(tokens, customize)
+        walk.ast = walk.build_ast(tokens, customize)
     except walker.ParserError, e :  # parser failed, dump disassembly
         print >>__real_out, e
         raise
     del tokens # save memory
 
     # convert leading '__doc__ = "..." into doc string
-    assert ast == 'stmts'
+    assert walk.ast == 'stmts'
     try:
-        if ast[0][0] == walker.ASSIGN_DOC_STRING(co.co_consts[0]):
+        if walk.ast[0][0] == walker.ASSIGN_DOC_STRING(co.co_consts[0]):
             # del ast[0]
             pass
-        if ast[-1] == walker.RETURN_NONE:
-            ast.pop() # remove last node
+        if walk.ast[-1] == walker.RETURN_NONE:
+            walk.ast.pop() # remove last node
             # todo: if empty, add 'pass'
     except:
         pass
-    walk.mod_globs = walker.find_globals(ast, set())
-    # walk.gen_source(ast, customize)
-    walk.walk_source(ast, co.co_name, customize)
+    walk.mod_globs = walker.find_globals(walk.ast, set())
+    walk.walk_source(walk.ast, co.co_name, customize)
+    walk.set_pos_info(walk.ast, 0, len(walk.text))
+    walk.fixup_parents(walk.ast, None)
+
     for g in walk.mod_globs:
         walk.write('global %s ## Warning: Unused global' % g)
     if walk.ERROR:
@@ -1057,22 +1112,26 @@ if __name__ == '__main__':
         # co = inspect.currentframe().f_code
         # uncompyle(2.7, co, sys.stdout, 1)
         walk = deparse(2.7, co, showasm=1, showast=1)
+        print("deparsed source")
         print walk.text, "\n"
-        print '------------------------'
+        print('------------------------')
         for name, offset in sorted(walk.offsets.keys()):
             print("name %s, offset %s" % (name, offset))
             nodeInfo = walk.offsets[name, offset]
             node = nodeInfo.node
             extractInfo = walk.extract_node_info(node)
+            print("code: %s" % node.type)
             # print extractInfo
             print extractInfo.selectedText
             print extractInfo.selectedLine
             print extractInfo.markerLine
-            extractInfo = walk.extract_parent_info(node)
+            extractInfo, p = walk.extract_parent_info(node)
             if extractInfo:
                 print "Contained in..."
                 print  extractInfo.selectedLine
                 print extractInfo.markerLine
+                print("code: %s" % p.type)
+                print('=' * 40)
                 pass
             pass
         return
@@ -1080,6 +1139,12 @@ if __name__ == '__main__':
 
     def get_code_for_fn(fn):
         return fn.__code__
+
+    def foo2():
+        try:
+            x = 1
+        except:
+            pass
 
     def check_args(args):
         deparse_test(inspect.currentframe().f_code)
@@ -1104,6 +1169,6 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     # check_args(['3', '5'])
-    # deparse_test(get_code_for_fn(gcd))
-    deparse_test(get_code_for_fn(Traverser.fixup_offsets))
+    deparse_test(get_code_for_fn(foo2))
+    # deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)
