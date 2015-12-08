@@ -40,7 +40,11 @@
   makes the engine walk down to N[C] before evaluating the escape code.
 '''
 
-from uncompyle2 import walker
+try:
+    from uncompyle2 import walker
+except ImportError:
+    from uncompyle2 import Walker as walker
+
 import sys, inspect, types, cStringIO, re
 
 
