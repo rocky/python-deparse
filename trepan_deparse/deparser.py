@@ -880,8 +880,8 @@ class Traverser(walker.Walker, object):
                 # as the iteration code with "i"
                 match = re.search(r'^for', startnode.type)
                 if match and entry[arg] == 3:
+                    self.set_pos_info(node[0], start, finish)
                     for n in node[2]:
-                        n.parent = node[2]
                         self.set_pos_info(n, start, finish)
 
                 self.set_pos_info(node, start, finish)
@@ -1162,11 +1162,9 @@ if __name__ == '__main__':
     def get_code_for_fn(fn):
         return fn.__code__
 
-    def foo2():
-        try:
-            x = 1
-        except:
-            pass
+    def for_range_stmt():
+        for i in range(2):
+            i+1
 
     def check_args(args):
         deparse_test(inspect.currentframe().f_code)
@@ -1191,6 +1189,7 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     # check_args(['3', '5'])
-    deparse_test(get_code_for_fn(foo2))
+    deparse_test(get_code_for_fn(for_range_stmt))
+    for_range_stmt()
     # deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)
