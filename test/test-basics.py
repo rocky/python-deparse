@@ -3,6 +3,7 @@
 
 from __future__ import print_function
 
+from helper import SYS_VERSION
 import os, sys, unittest, inspect
 from sys import version_info
 from inspect import getmembers, isfunction
@@ -10,9 +11,6 @@ from inspect import getmembers, isfunction
 from trepan_deparse import deparser
 
 class TestMaps(unittest.TestCase):
-
-    def setup(self):
-        self.sys_version = version_info.major + (version_info.minor / 10.0)
 
     def map_stmts(x, y):
         x = []
@@ -32,11 +30,11 @@ class TestMaps(unittest.TestCase):
             i+1
 
     def get_parsed_for_fn(self, fn):
-        return deparser.deparse(self.sys_version,
+        return deparser.deparse(SYS_VERSION,
                                 getmembers(fn, isfunction)[0][1].func_code)
 
     def check_expect(self, expect, parsed):
-        debug = False
+        debug = True
         i = 2
         max_expect = len(expect)
         for name, offset in sorted(parsed.offsets.keys()):
@@ -76,7 +74,6 @@ class TestMaps(unittest.TestCase):
 
 
     def test_stuff(self):
-        self.setup()
         parsed = self.get_parsed_for_fn(self.map_stmts)
         expect = """
 0
@@ -219,6 +216,12 @@ for i in range(2):
 Contained in...
 for i in range(2):
          --------
+9
+for i in range(2):
+         --------
+Contained in...
+for i in range(2): ...
+------------------ ...
 12
 for i in range(2):
     -
@@ -264,9 +267,7 @@ Contained in...
 """.split("\n")
         parsed = self.get_parsed_for_fn(self.for_range_stmt)
         self.check_expect(expect, parsed)
-
         return
-
 
 if __name__ == '__main__':
     unittest.main()

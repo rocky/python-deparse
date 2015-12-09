@@ -134,6 +134,7 @@ class Traverser(walker.Walker, object):
         self.last_finish = finish
 
     def preorder(self, node=None):
+
         if node is None:
             node = self.ast
 
@@ -829,8 +830,10 @@ class Traverser(walker.Walker, object):
         %c, %C, and so on.
         '''
 
-        # self.print_("-----")
+        #self.print_("-----")
         # self.print_(str(startnode.__dict__))
+        # print(entry[0])
+        # print('======')
 
         startnode_start = len(self.f.getvalue())
 
@@ -901,6 +904,7 @@ class Traverser(walker.Walker, object):
                     remaining -= 1
                     if remaining > 0:
                         self.write(sep)
+
                 self.set_pos_info(node, start, len(self.f.getvalue()))
                 arg += 1
             elif typ == 'P':
@@ -933,17 +937,28 @@ class Traverser(walker.Walker, object):
                 pass
             pass
 
-        # FIXME rocky: figure out how to get this to be table driven
-        # for loops have two positions that correspond to a single text
+        self.write(fmt[i:])
+        self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
+
+        # FIXME rocky: figure out how to get these casess to be table driven.
+        #
+        # 1. for loops. For loops have two positions that correspond to a single text
         # location. In "for i in ..." there is the initialization "i" code as well
-        # as the iteration code with "i"
+        # as the iteration code with "i".  A "copy" spec like %X3,3 - copy parame
+        # 3 to param 2 would work
+        #
+        # 2. subroutine calls. It the last op is the call and for purposes of printing
+        # we don't need to print anything special there. However it encompases the
+        # entire string of the node fn(...)
         match = re.search(r'^try', startnode.type)
         if match:
             self.set_pos_info(node[0], startnode_start, startnode_start+len("try:"))
             self.set_pos_info(node[2], node[3].finish, node[3].finish)
+        else:
+            match = re.search(r'^call_function', startnode.type)
+            if match:
+                self.set_pos_info(startnode[-1], startnode_start, self.last_finish)
 
-        self.write(fmt[i:])
-        self.set_pos_info(startnode, startnode_start, len(self.f.getvalue()))
 
     # def default(self, node):
     #    if hasattr(node, 'offset'):
@@ -1182,7 +1197,8 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     # check_args(['3', '5'])
-    deparse_test(get_code_for_fn(for_range_stmt))
-    for_range_stmt()
+    # deparse_test(get_code_for_fn(for_range_stmt))
+    deparse_test(get_code_for_fn(gcd))
+    # for_range_stmt()
     # deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)
