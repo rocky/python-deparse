@@ -149,7 +149,6 @@ class Traverser(walker.Walker, object):
             return
 
         for kid in node:
-            kid.parent = node
             self.preorder(kid)
 
         name = name + '_exit'
@@ -163,12 +162,10 @@ class Traverser(walker.Walker, object):
     def n_return_stmt(self, node):
         start = len(self.f.getvalue()) + len(self.indent)
         if self.__params['isLambda']:
-            node[0].parent = node
             self.preorder(node[0])
             if hasattr(node[-1], 'offset'):
                 self.set_pos_info(node[-1], start,
                 len(self.f.getvalue()))
-                node[-1].parent = node
             self.prune()
         else:
             start = len(self.f.getvalue()) + len(self.indent)
@@ -181,7 +178,6 @@ class Traverser(walker.Walker, object):
                 if hasattr(node[-1], 'offset'):
                     self.set_pos_info(node[-1], start,
                         len(self.f.getvalue()))
-                    node[-1].parent = node
             self.set_pos_info(node, start, len(self.f.getvalue()))
             self.print_()
             self.prune() # stop recursing
@@ -197,11 +193,9 @@ class Traverser(walker.Walker, object):
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_END_IF')]):
                 self.write(' ')
-                node[0].parent = node
                 self.preorder(node[0])
                 if hasattr(node[-1], 'offset'):
                     self.set_pos_info(node[-1], start, len(self.f.getvalue()))
-                    node[-1].parent = node
             self.print_()
         self.set_pos_info(node, start, len(self.f.getvalue()))
         self.prune() # stop recursing
@@ -900,7 +894,6 @@ class Traverser(walker.Walker, object):
                 lastC = remaining = len(node[low:high])
                 start = len(self.f.getvalue())
                 for subnode in node[low:high]:
-                    subnode.parent = node
                     self.preorder(subnode)
                     remaining -= 1
                     if remaining > 0:
@@ -914,7 +907,6 @@ class Traverser(walker.Walker, object):
                 start = self.last_finish
                 # remaining = len(node[low:high])
                 for subnode in node[low:high]:
-                    subnode.parent = node
                     self.preorder(subnode)
                     remaining -= 1
                     if remaining > 0:
