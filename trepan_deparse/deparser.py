@@ -9,7 +9,10 @@
 
   Decompilation (walking AST)
 
-  All table-driven.  Step 1 determines a table (T) and a path to a
+  All table-driven. (rocky: well, mostly. I need to add more format
+  specifiers for say duplicating info from one node to another.)
+
+  Step 1 determines a table (T) and a path to a
   table key (K) from the node type (N) (other nodes are shown as O):
 
          N                  N               N&K
@@ -40,13 +43,17 @@
   makes the engine walk down to N[C] before evaluating the escape code.
 '''
 
+from __future__ import print_function
+
 try:
+    # mysterie github version
     from uncompyle2 import walker
     from uncompyle2.walker import escape, PRECEDENCE, IntType, minint
     from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
     from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
     from uncompyle2.walker import ParserError
 except ImportError:
+    # PyPI version
     from uncompyle2 import Walker as walker
     from uncompyle2.Walker import escape, PRECEDENCE, IntType, minint
     from uncompyle2.Walker import EllipsisType, AST, NONE, find_all_globals
@@ -63,11 +70,11 @@ from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType
 
 try:
-     from uncompyle2.Scanner import Token, Code
-     older_uncompyle = True
+    from uncompyle2.Scanner import Token, Code
+    older_uncompyle = True
 except ImportError:
-     from uncompyle2.scanner import Token, Code
-     older_uncompyle = False
+    from uncompyle2.scanner import Token, Code
+    older_uncompyle = False
 
 from collections import namedtuple
 NodeInfo = namedtuple("NodeInfo", "node start finish")
@@ -446,7 +453,7 @@ class Traverser(walker.Walker, object):
 
         assert type(code) == CodeType
         code = Code(code, self.scanner, self.currentclass)
-        #assert isinstance(code, Code)
+        # assert isinstance(code, Code)
 
         ast = self.build_ast(code._tokens, code._customize)
         self.customize(code._customize)
@@ -465,7 +472,6 @@ class Traverser(walker.Walker, object):
         self.preorder(n[0])
         self.write(' for ')
         start = len(self.f.getvalue())
-        node[inter_index-1].parent = node
         self.preorder(ast[iter_index-1])
         self.set_pos_info(node, start, len(self.f.getvalue()))
         self.write(' in ')
@@ -641,7 +647,6 @@ class Traverser(walker.Walker, object):
         else:
             selectedText = text[start:finish]
 
-
         # Compute offsets relative to the beginning of the
         # line rather than the beinning of the text
         try:
@@ -688,12 +693,10 @@ class Traverser(walker.Walker, object):
                            selectedLine = selectedLine,
                            selectedText = selectedText)
 
-
     def extract_line_info(self, name, offset):
         if (name, offset) not in self.offsets.keys():
             return None
         return self.extract_node_info(self.offsets[name, offset])
-
 
     def extract_parent_info(self, node):
         if not hasattr(node, 'parent'):
@@ -848,7 +851,7 @@ class Traverser(walker.Walker, object):
                     node = node[int(m.group('child'))]
                     node.parent = startnode
             except:
-                print node.__dict__
+                print(node.__dict__)
                 raise
 
             if typ == '%':
@@ -922,7 +925,7 @@ class Traverser(walker.Walker, object):
                     self.write(eval(expr, d, d))
                     self.set_pos_info(node, start, len(self.f.getvalue()))
                 except:
-                    print node
+                    print(node)
                     raise
             m = escape.search(fmt, i)
             if hasattr(node, 'offset') and (self.name, node.offset) not in self.offsets:
@@ -975,9 +978,9 @@ class Traverser(walker.Walker, object):
 
             if default:
                 if self.showast:
-                    print '--', name
-                    print default
-                    print '--'
+                    print('--', name)
+                    print(default)
+                    print('--')
                     pass
                 result = '%s = ' % name
                 old_last_finish = self.last_finish
@@ -1123,11 +1126,10 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
 if __name__ == '__main__':
 
     def deparse_test(co):
-        # co = inspect.currentframe().f_code
-        # uncompyle(2.7, co, sys.stdout, 1)
-        walk = deparse(2.7, co, showasm=1, showast=1)
+        sys_version = sys.version_info.major + (sys.version_info.minor / 10.0)
+        walk = deparse(sys_version, co, showasm=1, showast=1)
         print("deparsed source")
-        print walk.text, "\n"
+        print(walk.text, "\n")
         print('------------------------')
         for name, offset in sorted(walk.offsets.keys()):
             print("name %s, offset %s" % (name, offset))
@@ -1136,20 +1138,19 @@ if __name__ == '__main__':
             extractInfo = walk.extract_node_info(node)
             print("code: %s" % node.type)
             # print extractInfo
-            print extractInfo.selectedText
-            print extractInfo.selectedLine
-            print extractInfo.markerLine
+            print(extractInfo.selectedText)
+            print(extractInfo.selectedLine)
+            print(extractInfo.markerLine)
             extractInfo, p = walk.extract_parent_info(node)
             if extractInfo:
-                print "Contained in..."
-                print  extractInfo.selectedLine
-                print extractInfo.markerLine
+                print("Contained in...")
+                print(extractInfo.selectedLine)
+                print(extractInfo.markerLine)
                 print("code: %s" % p.type)
                 print('=' * 40)
                 pass
             pass
         return
-
 
     def get_code_for_fn(fn):
         return fn.__code__
@@ -1162,9 +1163,9 @@ if __name__ == '__main__':
         deparse_test(inspect.currentframe().f_code)
         for i in range(2):
             try:
-                x  = int(args[i])
+                i  = int(args[i])
             except ValueError:
-                print("** Expecting an integer, got: %s" % repr(argv[i]))
+                print("** Expecting an integer, got: %s" % repr(args[i]))
                 sys.exit(2)
                 pass
             pass
