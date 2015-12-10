@@ -30,7 +30,7 @@ nosetests: check
 check-short: test-unit-short
 
 #: Run all tests: unit, functional and integration verbosely
-check: test-unit
+check: test-unit lint
 
 #: Run unit (white-box) tests
 test-unit:

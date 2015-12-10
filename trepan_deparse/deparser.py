@@ -1019,17 +1019,14 @@ class Traverser(walker.Walker, object):
         # build parameters
 
         # This would be a nicer piece of code, but I can't get this to work
-        # now, have to find a usable lambda constuct  hG/2000-09-05
+        #  now, have to find a usable lambda constuct  hG/2000-09-05
         # params = map(lambda name, default: build_param(ast, name, default),
-        # paramnames, defparams)
+        # 	     paramnames, defparams)
         params = []
-        nodes = []
         for name, default in map(lambda a, b: (a, b), paramnames, defparams):
-            nodes.append(default)
             params.append( build_param(ast, name, default) )
 
         params.reverse() # back to correct order
-        nodes.reverse() # back to correct order
 
         if 4 & code.co_flags:	# flag 2 -> variable number of args
             params.append('*%s' % code.co_varnames[argc])
@@ -1105,7 +1102,12 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
             # del ast[0]
             pass
         if walk.ast[-1] == walker.RETURN_NONE:
-            walk.ast.pop() # remove last node
+            walk.set_pos_info(walk.ast, 0, len(walk.text))
+            last = walk.ast.pop() # remove last node
+            print("WOOT")
+            if not hasattr(last, 'start'):
+                print("Adding start to last node")
+                walk.set_pos_info(last, len(walk.text), len(walk.text))
             # todo: if empty, add 'pass'
     except:
         pass
@@ -1153,9 +1155,13 @@ if __name__ == '__main__':
     def get_code_for_fn(fn):
         return fn.__code__
 
-    def for_range_stmt():
-        for i in range(2):
-            i+1
+    def foo(a, **options):
+        def bar(a, b=1, c=2):
+            print("a, b, c= ", a, int(b), c)
+        bar(a, **options)
+        options = {'c': 5, 'b': 10}
+        bar(a, **options)
+        return None
 
     def check_args(args):
         deparse_test(inspect.currentframe().f_code)
@@ -1180,8 +1186,7 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     # check_args(['3', '5'])
-    # deparse_test(get_code_for_fn(for_range_stmt))
-    deparse_test(get_code_for_fn(gcd))
-    # for_range_stmt()
+    deparse_test(get_code_for_fn(foo))
+    # deparse_test(get_code_for_fn(gcd))
     # deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)
