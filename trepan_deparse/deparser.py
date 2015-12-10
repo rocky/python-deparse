@@ -830,7 +830,7 @@ class Traverser(walker.Walker, object):
         %c, %C, and so on.
         '''
 
-        #self.print_("-----")
+        # self.print_("-----")
         # self.print_(str(startnode.__dict__))
         # print(entry[0])
         # print('======')
@@ -958,24 +958,7 @@ class Traverser(walker.Walker, object):
             match = re.search(r'^call_function', startnode.type)
             if match:
                 self.set_pos_info(startnode[-1], startnode_start, self.last_finish)
-
-
-    # def default(self, node):
-    #    if hasattr(node, 'offset'):
-    #        # if isinstance(node.offset, type('string')):
-    #        #     pass
-    #        print "XXX3", node.offset
-
-    #    mapping = MAP.get(node, MAP_DIRECT)
-    #    table = mapping[0]
-    #    key = node
-
-    #    for i in mapping[1:]:
-    #        key = key[i]
-
-    #    if table.has_key(key):
-    #        self.engine(table[key], node)
-    #        self.prune()
+        return
 
     def make_function(self, node, isLambda, nested=1):
         """Dump function defintion, doc string, and function body."""
