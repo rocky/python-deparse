@@ -30,12 +30,15 @@
 
     %c  evaluate N[A] recursively*
     %C  evaluate N[A[0]]..N[A[1]-1] recursively, separate by A[2]*
+    %P  same as %C but sets operator precedence
     %,  print ',' if last %C only printed one item (for tuples--unused)
     %|  tab to current indentation level
     %+ increase current indentation level
     %- decrease current indentation level
     %{...} evaluate ... in context of N
     %% literal '%'
+    %p evaluate N setting precedence
+
 
   * indicates an argument (A) required.
 
@@ -67,7 +70,8 @@ import sys, inspect, types, cStringIO, re
 # from uncompyle2.walker import find_all_globals, find_globals, find_none
 from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
-from types import CodeType
+from types import CodeType, ListType
+from uncompyle2 import parser
 
 try:
     from uncompyle2.Scanner import Token, Code
@@ -180,12 +184,17 @@ class Traverser(walker.Walker, object):
             self.write(self.indent, 'return')
             if self.return_none or node != AST('return_stmt', [AST('ret_expr', [NONE]), Token('RETURN_VALUE')]):
                 self.write(' ')
-                node[0].parent = node
                 self.last_finish = len(self.f.getvalue())
                 self.preorder(node[0])
                 if hasattr(node[-1], 'offset'):
-                    self.set_pos_info(node[-1], start,
-                        len(self.f.getvalue()))
+                    self.set_pos_info(node[-1], start, len(self.f.getvalue()))
+                    pass
+                pass
+            else:
+                for n in node:
+                    self.set_pos_info(n, start, len(self.f.getvalue()))
+                    pass
+                pass
             self.set_pos_info(node, start, len(self.f.getvalue()))
             self.print_()
             self.prune() # stop recursing
@@ -456,7 +465,7 @@ class Traverser(walker.Walker, object):
         code = Code(code, self.scanner, self.currentclass)
         # assert isinstance(code, Code)
 
-        ast = self.build_ast(code._tokens, code._customize)
+        ast = self.build_ast_d(code._tokens, code._customize)
         self.customize(code._customize)
         ast = ast[0][0][0]
 
@@ -524,7 +533,7 @@ class Traverser(walker.Walker, object):
 
         self.prune()
 
-    def walk_source(self, ast, name, customize, isLambda=0, returnNone=False):
+    def gen_source_d(self, ast, name, customize, isLambda=0, returnNone=False):
         """convert AST to source code"""
 
         rn = self.return_none
@@ -537,6 +546,38 @@ class Traverser(walker.Walker, object):
             self.customize(customize)
             self.text = self.traverse(ast, isLambda=isLambda)
         self.return_none = rn
+
+    def build_ast_d(self, tokens, customize, isLambda=0, noneInNames=False):
+        assert type(tokens) == ListType
+        # assert isinstance(tokens[0], Token)
+
+        if isLambda:
+            tokens.append(Token('LAMBDA_MARKER'))
+            try:
+                ast = parser.parse(tokens, customize)
+            except parser.ParserError, e:
+                raise ParserError(e, tokens)
+            if self.showast:
+                print(repr(ast))
+            return ast
+
+        if len(tokens) >= 2 and not noneInNames:
+            if tokens[-1] == Token('RETURN_VALUE'):
+                if tokens[-2] != Token('LOAD_CONST'):
+                    tokens.append(Token('RETURN_LAST'))
+        if len(tokens) == 0:
+            return
+
+        # Build AST from disassembly.
+        try:
+            ast = parser.parse(tokens, customize)
+        except parser.ParserError, e:
+            raise ParserError(e, tokens)
+
+        if self.showast:
+            print(repr(ast))
+
+        return ast
 
     # FIXME: we could provide another customized routine
     # that fixes up parents along a particular path to a node that
@@ -701,7 +742,7 @@ class Traverser(walker.Walker, object):
 
     def extract_parent_info(self, node):
         if not hasattr(node, 'parent'):
-            return None
+            return None, None
         p = node.parent
         orig_parent = p
         # If we can get different text, use that as the parent,
@@ -746,8 +787,6 @@ class Traverser(walker.Walker, object):
         self.indentMore(INDENT_PER_LEVEL)
         line_seperator = ',\n' + self.indent
         sep = INDENT_PER_LEVEL[:-1]
-        # print "\nFOO"
-        # from trepan.api import debug; debug()
         start = len(self.f.getvalue())
         self.write('{')
         for kv in kv_node:
@@ -912,7 +951,6 @@ class Traverser(walker.Walker, object):
                 low, high, sep, self.prec = entry[arg]
                 lastC = remaining = len(node[low:high])
                 start = self.last_finish
-                # remaining = len(node[low:high])
                 for subnode in node[low:high]:
                     self.preorder(subnode)
                     remaining -= 1
@@ -1007,10 +1045,10 @@ class Traverser(walker.Walker, object):
         paramnames.reverse(); defparams.reverse()
 
         try:
-            ast = self.build_ast(code._tokens,
-                                 code._customize,
-                                 isLambda = isLambda,
-                                 noneInNames = ('None' in code.co_names))
+            ast = self.build_ast_d(code._tokens,
+                                   code._customize,
+                                   isLambda = isLambda,
+                                   noneInNames = ('None' in code.co_names))
         except ParserError as p:
             self.write( str(p))
             self.ERROR = p
@@ -1055,7 +1093,8 @@ class Traverser(walker.Walker, object):
             self.print_(self.indent, 'global ', g)
         self.mod_globs -= all_globals
         rn = ('None' in code.co_names) and not find_none(ast)
-        self.walk_source(ast, code.co_name, code._customize, isLambda=isLambda, returnNone=rn)
+        self.gen_source_d(ast, code.co_name, code._customize, isLambda=isLambda,
+                          returnNone=rn)
         code._tokens = None; code._customize = None # save memory
 
     pass
@@ -1087,32 +1126,19 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
 
     try:
         if older_uncompyle:
-            walk.ast = walk.build_ast(tokens, customize)
+            walk.ast = walk.build_ast_d(tokens, customize)
         else:
-            walk.ast = walk.build_ast(tokens, customize)
+            walk.ast = walk.build_ast_d(tokens, customize)
     except walker.ParserError, e :  # parser failed, dump disassembly
         print >>__real_out, e
         raise
+
     del tokens # save memory
 
     # convert leading '__doc__ = "..." into doc string
     assert walk.ast == 'stmts'
-    try:
-        if walk.ast[0][0] == walker.ASSIGN_DOC_STRING(co.co_consts[0]):
-            # del ast[0]
-            pass
-        if walk.ast[-1] == walker.RETURN_NONE:
-            walk.set_pos_info(walk.ast, 0, len(walk.text))
-            last = walk.ast.pop() # remove last node
-            print("WOOT")
-            if not hasattr(last, 'start'):
-                print("Adding start to last node")
-                walk.set_pos_info(last, len(walk.text), len(walk.text))
-            # todo: if empty, add 'pass'
-    except:
-        pass
     walk.mod_globs = walker.find_globals(walk.ast, set())
-    walk.walk_source(walk.ast, co.co_name, customize)
+    walk.gen_source_d(walk.ast, co.co_name, customize)
     walk.set_pos_info(walk.ast, 0, len(walk.text))
     walk.fixup_parents(walk.ast, None)
 
