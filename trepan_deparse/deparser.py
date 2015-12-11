@@ -55,9 +55,11 @@ try:
     from uncompyle2.walker import EllipsisType, AST, NONE, find_all_globals
     from uncompyle2.walker import find_globals, find_none, INDENT_PER_LEVEL
     from uncompyle2.walker import ParserError
+    from uncompyle2 import parser
 except ImportError:
     # PyPI version
     from uncompyle2 import Walker as walker
+    from uncompyle2 import Parser as parser
     from uncompyle2.Walker import escape, PRECEDENCE, IntType, minint
     from uncompyle2.Walker import EllipsisType, AST, NONE, find_all_globals
     from uncompyle2.Walker import find_globals, find_none, INDENT_PER_LEVEL
@@ -71,7 +73,6 @@ import sys, inspect, types, cStringIO, re
 from uncompyle2.spark import GenericASTTraversal
 from uncompyle2.spark import GenericASTTraversalPruningException
 from types import CodeType, ListType
-from uncompyle2 import parser
 
 try:
     from uncompyle2.Scanner import Token, Code
