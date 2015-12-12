@@ -37,7 +37,7 @@ classifiers =  ['Development Status :: 4 - Beta',
 
 # The rest in alphabetic order
 author             = "Rocky Bernstein"
-author_email       = "rb@dustyfeet.com"
+author_email       = "rocky@gnu.org"
 ftp_url            = None
 install_requires   = ['uncompyle2']
 license            = 'GPL'
@@ -57,7 +57,8 @@ def get_srcdir():
 
 # VERSION.py sets variable VERSION.
 ns = {}
-version            = '1.0.0'
+exec(open(os.path.join(get_srcdir(), 'trepan_deparse', 'VERSION.py')).read(), ns)
+version            = ns['VERSION']
 web                = 'http://github.com/rocky/python-trepan-deparse/'
 
 # tracebacks in zip files are funky and not debuggable
