@@ -26,10 +26,9 @@ copyright   = """
 Copyright (C) 2015 Rocky Bernstein <rocky@gnu.org>.
 """
 
-classifiers =  ['Development Status :: 5 - Production/Stable',
+classifiers =  ['Development Status :: 4 - Beta',
                 'Environment :: Console',
                 'Intended Audience :: Developers',
-                'License :: OSI Approved :: GNU General Public License (GPL)',
                 'Operating System :: OS Independent',
                 'Programming Language :: Python',
                 'Topic :: Software Development :: Debuggers',
@@ -38,7 +37,7 @@ classifiers =  ['Development Status :: 5 - Production/Stable',
 
 # The rest in alphabetic order
 author             = "Rocky Bernstein"
-author_email       = "rocky@gnu.org"
+author_email       = "rb@dustyfeet.com"
 ftp_url            = None
 install_requires   = ['uncompyle2']
 license            = 'GPL'

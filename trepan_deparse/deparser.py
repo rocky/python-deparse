@@ -1177,7 +1177,7 @@ if __name__ == '__main__':
 
     def deparse_test(co):
         sys_version = sys.version_info.major + (sys.version_info.minor / 10.0)
-        walk = deparse(sys_version, co, showasm=0, showast=0)
+        walk = deparse(sys_version, co, showasm=1, showast=1)
         print("deparsed source")
         print(walk.text, "\n")
         print('------------------------')
