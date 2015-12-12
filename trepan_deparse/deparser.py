@@ -65,7 +65,12 @@ except ImportError:
     from uncompyle2.Walker import find_globals, find_none, INDENT_PER_LEVEL
     from uncompyle2.Walker import ParserError
 
-import sys, inspect, types, cStringIO, re
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
+
+import sys, inspect, types, re
 
 
 # FIXME: remove uncompyle dups
@@ -92,7 +97,7 @@ class Traverser(walker.Walker, object):
     def __init__(self, scanner, showast=0):
         GenericASTTraversal.__init__(self, ast=None)
         self.scanner = scanner
-        params = {'f': cStringIO.StringIO(), 'indent': '', }
+        params = {'f': StringIO(), 'indent': '', }
         self.showast = showast
         self.__params = params
         self.__param_stack = []
@@ -462,7 +467,7 @@ class Traverser(walker.Walker, object):
         self.prec = 27
         code = node[-5].attr
 
-        assert type(code) == CodeType
+        assert isinstance(code, types.CodeType)
         code = Code(code, self.scanner, self.currentclass)
         # assert isinstance(code, Code)
 
@@ -549,14 +554,14 @@ class Traverser(walker.Walker, object):
         self.return_none = rn
 
     def build_ast_d(self, tokens, customize, isLambda=0, noneInNames=False):
-        assert type(tokens) == ListType
+        # assert type(tokens) == ListType
         # assert isinstance(tokens[0], Token)
 
         if isLambda:
             tokens.append(Token('LAMBDA_MARKER'))
             try:
                 ast = parser.parse(tokens, customize)
-            except parser.ParserError, e:
+            except parser.ParserError as e:
                 raise ParserError(e, tokens)
             if self.showast:
                 print(repr(ast))
@@ -572,7 +577,7 @@ class Traverser(walker.Walker, object):
         # Build AST from disassembly.
         try:
             ast = parser.parse(tokens, customize)
-        except parser.ParserError, e:
+        except parser.ParserError as e:
             raise ParserError(e, tokens)
 
         if self.showast:
@@ -643,7 +648,7 @@ class Traverser(walker.Walker, object):
         self.pending_newlines = 0
         self.__params = {
             '_globals': {},
-            'f': cStringIO.StringIO(),
+            'f': StringIO(),
             'indent': indent,
             'isLambda': isLambda,
             }
@@ -737,7 +742,7 @@ class Traverser(walker.Walker, object):
                            selectedText = selectedText)
 
     def extract_line_info(self, name, offset):
-        if (name, offset) not in self.offsets.keys():
+        if (name, offset) not in list(self.offsets.keys()):
             return None
         return self.extract_node_info(self.offsets[name, offset])
 
@@ -837,7 +842,7 @@ class Traverser(walker.Walker, object):
         elif lastnode.startswith('ROT_TWO'):
             self.write('('); endchar = ')'
         else:
-            raise 'Internal Error: n_build_list expects list or tuple'
+            raise RuntimeError('Internal Error: n_build_list expects list or tuple')
 
         self.indentMore(INDENT_PER_LEVEL)
         if len(node) > 3:
@@ -1100,7 +1105,7 @@ class Traverser(walker.Walker, object):
 
     pass
 
-def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
+def deparse(version, co, out=StringIO(), showasm=0, showast=0):
     assert isinstance(co, types.CodeType)
     # store final output stream for case of error
     __real_out = out or sys.stdout
@@ -1130,8 +1135,8 @@ def deparse(version, co, out=cStringIO.StringIO(), showasm=0, showast=0):
             walk.ast = walk.build_ast_d(tokens, customize)
         else:
             walk.ast = walk.build_ast_d(tokens, customize)
-    except walker.ParserError, e :  # parser failed, dump disassembly
-        print >>__real_out, e
+    except walker.ParserError as e :  # parser failed, dump disassembly
+        print(e, file=__real_out)
         raise
 
     del tokens # save memory
