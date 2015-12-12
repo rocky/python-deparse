@@ -438,12 +438,18 @@ class Traverser(walker.Walker, object):
         iname = node[0].pattr
         assert node[-1][-1].type.startswith('STORE_')
         sname = node[-1][-1].pattr # assume one of STORE_.... here
-        node[-1][-1].parent = node
+        self.write(iname)
+        finish = len(self.f.getvalue())
         if iname == sname or iname.startswith(sname + '.'):
-            self.write(iname)
+            self.set_pos_info_recurse(node, start, finish)
         else:
-            self.write(iname, ' as ', sname)
-        self.set_pos_info(node, start, len(self.f.getvalue()))
+            self.write(' as ')
+            sname_start = len(self.f.getvalue())
+            self.write(sname)
+            finish = len(self.f.getvalue())
+            for n in node[-1]:
+                self.set_pos_info_recurse(n, sname_start, finish)
+            self.set_pos_info(node, start, finish)
         self.prune() # stop recursing
 
     def n_mkfunc(self, node):
@@ -628,6 +634,16 @@ class Traverser(walker.Walker, object):
                     n.finish += new_start
             else:
                 self.fixup_offsets(new_start, n)
+        return
+
+    def set_pos_info_recurse(self, node, start, finish):
+        """Set positions under node"""
+        self.set_pos_info(node, start, finish)
+        for n in node:
+            if hasattr(n, 'offset'):
+                self.set_pos_info(n, start, finish)
+            else:
+                self.set_pos_info_recurse(n, start, finish)
         return
 
     def node_append(self, before_str, node_text, node):
@@ -875,8 +891,8 @@ class Traverser(walker.Walker, object):
         %c, %C, and so on.
         '''
 
-        # self.print_("-----")
-        # self.print_(str(startnode.__dict__))
+        # print("-----")
+        # print(startnode)
         # print(entry[0])
         # print('======')
 
@@ -1001,7 +1017,9 @@ class Traverser(walker.Walker, object):
         else:
             match = re.search(r'^call_function', startnode.type)
             if match:
-                self.set_pos_info(startnode[-1], startnode_start, self.last_finish)
+                last_node = startnode[-1]
+                # import traceback; traceback.print_stack()
+                self.set_pos_info(last_node, startnode_start, self.last_finish)
         return
 
     def make_function(self, node, isLambda, nested=1):
@@ -1159,7 +1177,7 @@ if __name__ == '__main__':
 
     def deparse_test(co):
         sys_version = sys.version_info.major + (sys.version_info.minor / 10.0)
-        walk = deparse(sys_version, co, showasm=1, showast=1)
+        walk = deparse(sys_version, co, showasm=0, showast=0)
         print("deparsed source")
         print(walk.text, "\n")
         print('------------------------')
@@ -1218,7 +1236,7 @@ if __name__ == '__main__':
         return gcd(b-a, a)
 
     # check_args(['3', '5'])
-    deparse_test(get_code_for_fn(foo))
+    deparse_test(get_code_for_fn(gcd))
     # deparse_test(get_code_for_fn(gcd))
     # deparse_test(get_code_for_fn(Traverser.fixup_offsets))
     # deparse_test(inspect.currentframe().f_code)
